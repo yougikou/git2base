@@ -1,0 +1,4 @@
+pygit2
+psycopg2
+tqdm
+pyyaml
