@@ -84,7 +84,8 @@ def reset_database():
         line_count2 INT,
         char_length2 INT,
         blob_hash2 VARCHAR(255),
-        content_snapshot2 TEXT
+        content_snapshot2 TEXT,
+        tech_stack VARCHAR(255)
     );
     """
     with get_db_connection() as conn:
@@ -136,8 +137,8 @@ def insert_diff_files(diff_files_data):
     query = """
     INSERT INTO git_diff_files (commit_hash1_id, commit_hash2_id, file_path, file_type, change_type, 
                                 line_count1, char_length1, blob_hash1, content_snapshot1, 
-                                line_count2, char_length2, blob_hash2, content_snapshot2)
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                line_count2, char_length2, blob_hash2, content_snapshot2, tech_stack)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
     with get_db_connection() as conn:
         with conn.cursor() as cursor:

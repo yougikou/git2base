@@ -4,3 +4,23 @@ database:
   database: "gitbase"
   user: "gituser"
   password: "giko"
+
+stacks:
+  - name: Assets
+    paths: ["assets"]
+    extensions: []
+  - name: Application
+    paths: ["crates"]
+    extensions: [".rs", ".toml"]
+  - name: Extension
+    paths: ["extensions"]
+    extensions: [".rs", ".toml"]
+  - name: TestData
+    paths: []
+    extensions: [".json"]
+  - name: Script
+    paths: ["script"]
+    extensions: []
+  - name: Tooling
+    paths: ["tooling"]
+    extensions: [".rs", ".toml"]

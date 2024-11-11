@@ -1,7 +1,14 @@
+import os
 import pygit2
+import yaml
 from db_operations import get_commit_id, insert_commit, commit_exists_in_db, insert_commit_and_files, insert_diff_files
 from tqdm import tqdm
 from utils import is_binary, calculate_file_metrics
+
+def load_stacks_config():
+    with open('config.yaml', 'r') as file:
+        config = yaml.safe_load(file)
+    return config.get('stacks', [])
 
 def get_change_type(delta):
     if delta.status == pygit2.GIT_DELTA_ADDED:
@@ -138,6 +145,8 @@ def get_git_commits(repo, branch, start_commit_hash=None):
     print("所有提交处理完成")
 
 def get_git_diff(repo, commit_hash1, commit_hash2):
+    stacks = load_stacks_config()
+
     # Ensure commit_hash1 exists in the database, otherwise insert it
     commit1 = repo.get(commit_hash1)
     if not commit_exists_in_db(commit_hash1):
@@ -180,7 +189,13 @@ def get_git_diff(repo, commit_hash1, commit_hash2):
     with tqdm(total=total_patches, desc="Processing patches", unit="patch", bar_format="{desc}: {n_fmt}/{total_fmt} patches") as pbar:
         for patch in diff:
             file_path = patch.delta.new_file.path if patch.delta.new_file.path else patch.delta.old_file.path
+
+            # 跳过以 . 开头的路径
+            if file_path.startswith('.'):
+                continue
+
             file_type = file_type = get_file_type(file_path)
+            tech_stack = identify_tech_stack(file_path, stacks)
 
             # 获取变更类型
             change_type = get_change_type(patch.delta)
@@ -247,6 +262,7 @@ def get_git_diff(repo, commit_hash1, commit_hash2):
                 char_length2,
                 str(patch.delta.new_file.id) if patch.delta.new_file.id else None,
                 snapshot2,
+                tech_stack
             )
             
             diff_files_data.append(diff_tuple)
@@ -264,3 +280,10 @@ def get_git_diff(repo, commit_hash1, commit_hash2):
         if diff_files_data:
             insert_diff_files(diff_files_data)
             pbar.update(len(diff_files_data))
+
+def identify_tech_stack(file_path, stacks):
+    extension = os.path.splitext(file_path)[1]
+    for stack in stacks:
+        if any(file_path.startswith(path) for path in stack['paths']) or extension in stack['extensions']:
+            return stack['name']
+    return None
