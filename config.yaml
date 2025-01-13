@@ -6,21 +6,37 @@ database:
   password: "giko"
 
 stacks:
-  - name: Assets
-    paths: ["assets"]
-    extensions: []
-  - name: Application
-    paths: ["crates"]
-    extensions: [".rs", ".toml"]
-  - name: Extension
-    paths: ["extensions"]
-    extensions: [".rs", ".toml"]
-  - name: TestData
+  # - name: Assets
+  #   paths: ["assets"]
+  #   extensions: []
+  # - name: Application
+  #   paths: ["crates"]
+  #   extensions: [".rs", ".toml"]
+  # - name: Extension
+  #   paths: ["extensions"]
+  #   extensions: [".rs", ".toml"]
+  # - name: TestData
+  #   paths: []
+  #   extensions: [".json"]
+  # - name: Script
+  #   paths: ["script"]
+  #   extensions: []
+  # - name: Tooling
+  #   paths: ["tooling"]
+  #   extensions: [".rs", ".toml"]
+  - name: Java
     paths: []
-    extensions: [".json"]
-  - name: Script
-    paths: ["script"]
-    extensions: []
-  - name: Tooling
-    paths: ["tooling"]
-    extensions: [".rs", ".toml"]
+    extensions: [".java"]
+  - name: XML
+    paths: []
+    extensions: [".xml"]
+
+analyzers:
+  - name: XMLElementCount
+    class: "XMLElementCountAnalyzer"
+    tech_stacks: ["XML"]
+  - name: JavaClassCount
+    class: "RegexMatchCountAnalyzer"
+    params:
+      patterns: ['(?<!\w)\bclass\s+(\w+)\b(?:\s+extends\s+(\w+))?(?:\s+implements\s+([\w\s,]+))?\s*\{']
+    tech_stacks: ["Java"]

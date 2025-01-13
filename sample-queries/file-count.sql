@@ -7,4 +7,11 @@ SELECT
     SUM(char_length2) AS char_length2
 FROM git_diff_files
 GROUP BY
-    file_type
+    file_type;
+
+SELECT
+    file_type,
+    COUNT(*) AS file_count
+FROM git_files
+GROUP BY
+    file_type;
