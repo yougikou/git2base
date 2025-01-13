@@ -1,19 +1,19 @@
 # Git2Base
 
-Git2Base is a Python tool for extracting and analyzing Git repository data into a PostgreSQL database. It provides:
+Git2Base 是一个将Git仓库数据提取并分析到PostgreSQL数据库的Python工具。它提供以下功能：
 
-- Import of Git commit history and file changes into a structured database schema
-- Diff analysis between commits  
-- Extensible analysis framework for processing repository data
+- 将Git提交历史和文件变更导入结构化数据库模式
+- 提交之间的差异分析
+- 可扩展的仓库数据处理框架
 
-## Installation
+## 安装
 
-1. Install requirements:
+1. 安装依赖：
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Configure database connection in config.yaml:
+2. 在config.yaml中配置数据库连接：
 ```yaml
 database:
   host: localhost
@@ -23,12 +23,12 @@ database:
   password: password
 ```
 
-3. Initialize database schema:
+3. 初始化数据库模式：
 ```bash
 python main.py --reset
 ```
 
-## Database Schema
+## 数据库模式
 
 ```sql
 git_commits:
@@ -42,36 +42,36 @@ git_diff_files:
   line_count1, blob_hash1, content_snapshot1, line_count2, blob_hash2, content_snapshot2
 ```
 
-## Usage
+## 使用说明
 
-### Import Git Data
+### 导入Git数据
 
-- Reset database:
+- 重置数据库：
 ```bash
 python main.py --reset
 ```
 
-- Extract branch commit history from start/latest commit:
+- 从起始/最新提交提取分支提交历史：
 ```bash
 python main.py --repo /path/to/repo --branch <branch-name>
 ```
 
-- Extract branch commit history from specific commit:
+- 从特定提交提取分支提交历史：
 ```bash
 python main.py --repo /path/to/repo --branch <branch-name> --commit_hash <hash>
 ```
 
-- Extract diff between two commits:
+- 提取两个提交之间的差异：
 ```bash
 python main.py --repo /path/to/repo --diff <hash1> <hash2>
 ```
 
-- Analyze existing diffs:
+- 分析现有差异：
 ```bash
 python main.py --analyze <hash1> <hash2>
 ```
 
-## Analyzers
+## 分析器
 
 Git2Base 提供了一个可扩展的分析器框架，支持动态加载和注册分析器。
 
@@ -97,42 +97,36 @@ Git2Base 提供了一个可扩展的分析器框架，支持动态加载和注�
    YourAnalyzer.register()
    ```
 
-### 测试代码示例
+### 测试说明
 
-#### RegexMatchCountAnalyzer 测试
-```python
-from analyzers import get_analyzer
-
-params = {
-    "patterns": [r"\bclass\b"]
-}
-analyzer = get_analyzer("regex_match_count", params)
-
-content = """
-public class MyClass {
-    private int x;
-}
-"""
-
-count, result = analyzer.analyze(content)
-print(f"匹配次数: {count}")
-print(f"详细结果: {result}")
+#### 运行测试
+```bash
+python -m unittest tests/test_analyzers.py -v
 ```
 
-#### XMLElementCountAnalyzer 测试
+#### 测试用例结构
+每个测试用例应包含以下字段：
+- content: 测试内容（字符串）
+- expected_count: 预期匹配次数（整数）
+- expected_result: 预期结果（字典，将被转换为JSON字符串进行比较）
+- name: 测试用例名称（可选）
+
+#### 测试结果比较
+测试框架使用JSON字符串比较来验证分析结果：
+1. 将实际结果和预期结果转换为JSON字符串
+2. 对JSON字符串进行排序和规范化
+3. 比较规范化后的JSON字符串
+
+#### 测试代码示例
 ```python
-from analyzers import get_analyzer
-
-analyzer = get_analyzer("xml_element_count", {})
-
-content = """
-<root>
-    <child>test</child>
-</root>
-"""
-
-count, result = analyzer.analyze(content)
-print(f"元素数量: {count}")
+{
+    "name": "简单类定义匹配",
+    "content": "public class MyClass {}",
+    "expected_count": 1,
+    "expected_result": {
+        "class": ["MyClass"]
+    }
+}
 ```
 
 ### 分析器注册机制
@@ -142,18 +136,18 @@ print(f"元素数量: {count}")
 - 使用 `get_analyzer()` 获取分析器实例
 - 支持从配置文件加载分析器参数
 
-## Sample Queries
+## 结果统计示例查询
 
-Example SQL queries are provided in the sample-queries/ directory:
+示例SQL查询位于sample-queries/目录中：
 
-- file-count.sql: Count files by type
-- stack-files-count.sql: Count files in a stack
-- XMLElem.sql: Query XML element counts
+- file-count.sql: 按类型统计文件数量
+- stack-files-count.sql: 统计堆栈中的文件数量
+- XMLElem.sql: 查询XML元素数量
 
-## Contributing
+## 贡献指南
 
-1. Fork the repository
-2. Create a feature branch
-3. Submit a pull request
+1. Fork 本仓库
+2. 创建特性分支
+3. 提交Pull Request
 
-Please ensure all code follows PEP 8 style guidelines.
+请确保所有代码遵循PEP 8风格指南。
