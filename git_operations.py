@@ -29,7 +29,7 @@ def _load_config():
         with _config_lock:
             if _config_cache is None or mod_time > _config_last_modified:
                 try:
-                    with open('config.yaml', 'r') as file:
+                    with open('config.yaml', 'r', encoding='utf-8') as file:
                         config = yaml.safe_load(file)
                         if not isinstance(config, dict):
                             raise ValueError("Config must be a dictionary")
@@ -179,14 +179,17 @@ def get_git_commits(repo: pygit2.Repository, branch: str, start_commit_hash: str
 
         # 获取提交的 diff
         if commit.parents:
-            diff = commit.tree.diff_to_tree(commit.parents[0].tree)
+            # diff = commit.tree.diff_to_tree(commit.parents[0].tree)
+            diff = commit.parents[0].tree.diff_to_tree(commit.tree)
         else:
-            diff = commit.tree.diff_to_tree()
+            # diff = commit.tree.diff_to_tree()
+            empty_tree = repo.TreeBuilder().write()
+            diff = repo[empty_tree].diff_to_tree(commit.tree)
 
         files = []
         for delta in diff.deltas:
             file_path = delta.new_file.path if delta.status != pygit2.GIT_DELTA_DELETED else delta.old_file.path
-            file_type = get_file_type(file_path)  # 使用新函数获取文件类型
+            file_type = get_file_type(file_path) 
 
             try:
                 blob = repo[delta.new_file.id] if delta.status != pygit2.GIT_DELTA_DELETED else None
@@ -232,18 +235,6 @@ def get_git_commits(repo: pygit2.Repository, branch: str, start_commit_hash: str
 
 def get_git_diff(repo, commit_hash1, commit_hash2, save_snapshot=True, run_analysis=False):
     stacks = load_stacks_config()
-    analyzers = load_analyzer_config() if run_analysis else []
-    loadedAnalyzers = {}
-    for analyzer_config in analyzers:
-        class_name = analyzer_config['class']
-        module_name = f'analyzers.{class_name}'
-        try:
-            # 动态加载模块和类
-            module = importlib.import_module(module_name)
-            analyzer_class = getattr(module, class_name)
-            loadedAnalyzers[class_name] = analyzer_class
-        except (ImportError, AttributeError) as e:
-            raise ImportError(f"Failed to load {class_name} from {module_name}: {e}")
 
     # Ensure commit_hash1 exists in the database, otherwise insert it
     commit1 = repo.get(commit_hash1)
@@ -257,9 +248,9 @@ def get_git_diff(repo, commit_hash1, commit_hash2, save_snapshot=True, run_analy
             'author_name': commit1.author.name,
             'author_email': commit1.author.email
         }
-        commit_hash1_id = insert_commit(commit_data1)  # 获取插入的 commit_id
+        commit_1_id = insert_commit(commit_data1)  # 获取插入的 commit_id
     else:
-        commit_hash1_id = get_commit_id(commit_hash1)
+        commit_1_id = get_commit_id(commit_hash1)
 
     # Ensure commit_hash2 exists in the database, otherwise insert it
     commit2 = repo.get(commit_hash2)
@@ -273,16 +264,15 @@ def get_git_diff(repo, commit_hash1, commit_hash2, save_snapshot=True, run_analy
             'author_name': commit2.author.name,
             'author_email': commit2.author.email
         }
-        commit_hash2_id = insert_commit(commit_data2)  # 获取插入的 commit_id
+        commit_2_id = insert_commit(commit_data2)  # 获取插入的 commit_id
     else:
-        commit_hash2_id = get_commit_id(commit_hash2)  # 已存在则直接获取 commit_id
+        commit_2_id = get_commit_id(commit_hash2)  # 已存在则直接获取 commit_id
 
     # Get the diff between the two commits
     diff = commit2.tree.diff_to_tree(commit1.tree)
 
     total_patches = len(diff)
     processed_count = 0
-    diff_files_data = []
 
     with tqdm(total=total_patches, desc="Processing patches", unit="patch", bar_format="{desc}: {n_fmt}/{total_fmt} patches") as pbar:
         for patch in diff:
@@ -292,8 +282,7 @@ def get_git_diff(repo, commit_hash1, commit_hash2, save_snapshot=True, run_analy
             if file_path.startswith('.'):
                 continue
 
-            file_type = file_type = get_file_type(file_path)
-            tech_stack = identify_tech_stack(file_path, stacks)
+            file_type = get_file_type(file_path)
 
             # 获取变更类型
             change_type = get_change_type(patch.delta)
@@ -354,9 +343,11 @@ def get_git_diff(repo, commit_hash1, commit_hash2, save_snapshot=True, run_analy
             db_snapshot1 = snapshot1 if save_snapshot else None
             db_snapshot2 = snapshot2 if save_snapshot else None
             
+            tech_stack = identify_tech_stack(file_path, stacks)
+
             diff_file = {
-                'commit_hash1_id': commit_hash1_id,
-                'commit_hash2_id': commit_hash2_id,
+                'commit_1_id': commit_1_id,
+                'commit_2_id': commit_2_id,
                 'file_path': file_path,
                 'file_type': file_type,
                 'change_type': change_type,
@@ -375,72 +366,97 @@ def get_git_diff(repo, commit_hash1, commit_hash2, save_snapshot=True, run_analy
             diff_id = insert_diff_file(diff_file)
             
             # 如果需要运行分析
-            if run_analysis and tech_stack:
-                for analyzer_config in analyzers:
-                    # 检查分析器是否适用于当前技术栈
-                    if tech_stack in analyzer_config['tech_stacks']:
-                        analyzer_name = analyzer_config['name']
-                        
-                        # 检查是否已经分析过
-                        if not analysis_exists(analyzer_name, diff_id):
-                            # 实例化分析器类
-                            analyzer_class = loadedAnalyzers[analyzer_config['class']]
-                            params = analyzer_config.get('params', None)
-                            if (params is not None):
-                                analyzer = analyzer_class(params)
-                            else:
-                                analyzer = analyzer_class()
-                                
-                            # 分析两个快照
-                            if snapshot1 and snapshot1 not in ['<added>', '<binary>']:
-                                count1, result1 = analyzer.analyze(snapshot1)
-                            else:
-                                count1, result1 = 0, None
-                                
-                            if snapshot2 and snapshot2 not in ['<deleted>', '<binary>']:
-                                count2, result2 = analyzer.analyze(snapshot2)
-                            else:
-                                count2, result2 = 0, None
-                            
-                            save_analysis_result(analyzer_name, diff_id, commit_hash1_id, commit_hash2_id, count1, result1, count2, result2)
-
-                # remove_diff_file_snapshot(diff_id)
+            if run_analysis:
+                analyzers = load_analyzer_config() if run_analysis else []
+                loadedAnalyzers = _load_analyzers(analyzers) if analyzers else {}
+                _analyze_diff(diff_id, commit_1_id, commit_2_id, 
+                            snapshot1, snapshot2, tech_stack, 
+                            analyzers, loadedAnalyzers)
 
             processed_count += 1
             pbar.n = processed_count
             pbar.refresh()
 
 def analyze_existing_diffs(commit_hash1, commit_hash2):
-    stacks = load_stacks_config()
     analyzers = load_analyzer_config()
+    loadedAnalyzers = _load_analyzers(analyzers) if analyzers else {}
 
     # 获取数据库中的diff数据，然后进行分析
     diff_data = get_diff_data(commit_hash1, commit_hash2)
-    for diff in diff_data:
-        tech_stack = identify_tech_stack(diff['file_path'], stacks)
-        if tech_stack:
-            for analyzer_config in analyzers:
-                if tech_stack in analyzer_config['tech_stacks']:
-                    analyzer_name = analyzer_config['name']
+
+    total_files = len(diff_data)
+    processed_count = 0
+
+    with tqdm(total=total_files, desc="Processing analyzing", unit="file", bar_format="{desc}: {n_fmt}/{total_fmt} files") as pbar:
+        for diff in diff_data:
+            _analyze_diff(diff.id, diff.commit_1_id, diff.commit_2_id, 
+                        diff.content_snapshot1, diff.content_snapshot2, diff.tech_stack,
+                        analyzers, loadedAnalyzers)
+            processed_count += 1
+            pbar.n = processed_count
+            pbar.refresh()
+
+def _load_analyzers(analyzers):
+    """加载分析器类
+    
+    Args:
+        analyzers: 分析器配置列表
+        
+    Returns:
+        dict: 已加载的分析器类字典
+        
+    Raises:
+        ImportError: 如果无法加载分析器
+    """
+    loaded_analyzers = {}
+    for analyzer_config in analyzers:
+        class_name = analyzer_config['class']
+        module_name = f'analyzers.{class_name}'
+        try:
+            module = importlib.import_module(module_name)
+            analyzer_class = getattr(module, class_name)
+            loaded_analyzers[class_name] = analyzer_class
+        except (ImportError, AttributeError) as e:
+            raise ImportError(f"Failed to load {class_name} from {module_name}: {e}")
+    return loaded_analyzers
+
+def _analyze_diff(diff_id, commit_1_id, commit_2_id, snapshot1, snapshot2, tech_stack, analyzers, loadedAnalyzers):
+    """分析diff文件并保存结果
+    
+    Args:
+        diff_id: diff记录ID
+        commit_1_id: 提交1 ID
+        commit_2_id: 提交2 ID
+        snapshot1: 快照1内容
+        snapshot2: 快照2内容
+        tech_stack: 技术栈
+        analyzers: 分析器配置列表
+        loadedAnalyzers: 已加载的分析器类字典
+    """
+    if tech_stack:
+        for analyzer_config in analyzers:
+            if tech_stack in analyzer_config['tech_stacks']:
+                analyzer_name = analyzer_config['name']
+                
+                # 检查是否已经分析过
+                if not analysis_exists(analyzer_name, diff_id):
+                    # 实例化分析器类
+                    analyzer_class = loadedAnalyzers[analyzer_config['class']]
+                    params = analyzer_config.get('params', None)
+                    analyzer = analyzer_class(params or {})
+                        
+                    # 分析两个快照
+                    if snapshot1 and snapshot1 not in ['<added>', '<binary>']:
+                        count1, result1 = analyzer.analyze(snapshot1)
+                    else:
+                        count1, result1 = 0, None
+                        
+                    if snapshot2 and snapshot2 not in ['<deleted>', '<binary>']:
+                        count2, result2 = analyzer.analyze(snapshot2)
+                    else:
+                        count2, result2 = 0, None
                     
-                    # 检查是否已经分析过
-                    if not analysis_exists(analyzer_name, diff['id']):
-                        # 实例化分析器类
-                        analyzer_class = globals()[analyzer_config['class']]
-                        analyzer = analyzer_class()
-                        
-                        # 分析两个快照
-                        if diff['snapshot1'] and diff['snapshot1'] not in ['<added>', '<binary>']:
-                            count1, result1 = analyzer.analyze(diff['snapshot1'])
-                        else:
-                            count1, result1 = 0, None
-                            
-                        if diff['snapshot2'] and diff['snapshot2'] not in ['<deleted>', '<binary>']:
-                            count2, result2 = analyzer.analyze(diff['snapshot2'])
-                        else:
-                            count2, result2 = 0, None
-                        
-                        save_analysis_result(analyzer_name, diff['id'], diff['commit_hash1_id'], diff['commit_hash2_id'], count1, result1, count2, result2)
+                    save_analysis_result(analyzer_name, diff_id, commit_1_id, commit_2_id, count1, result1, count2, result2)
 
 def identify_tech_stack(file_path, stacks):
     extension = os.path.splitext(file_path)[1]

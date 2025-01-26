@@ -6,17 +6,21 @@ from utils import parse_short_hash
 
 def main():
     parser = argparse.ArgumentParser(description='Git 数据库导入工具')
-    parser.add_argument('--reset', action='store_true', help='重置数据库')
+    parser.add_argument('--reset-db', action='store_true', help='重置数据库')
     parser.add_argument('--repo', type=str, help='指定Git仓库路径')
-    parser.add_argument('--branch', type=str, help='指定分支')
+    parser.add_argument('--branch', type=str, help='指定分支，如果未提供则使用当前checkout的分支')
     parser.add_argument('--commit_hash', type=str, help='指定commit hash，支持短hash')
     parser.add_argument('--diff', nargs=2, metavar=('commit_hash1', 'commit_hash2'), help='比较两个commit的差异，支持短hash')
     parser.add_argument('--analyze', nargs='*', metavar=('commit_hash1', 'commit_hash2'), help='分析已有的diff结果，支持短hash。或者在diff时指定analyze参数，直接分析diff结果')
 
     args = parser.parse_args()
 
+    # 初始化数据库连接
+    from db_operations import initialize_db
+    initialize_db()
+    
     # 如果是重置数据库，不需要repo路径
-    if args.reset:
+    if args.reset_db:
         reset_database()
         print("数据库已重置")
         return
@@ -28,6 +32,11 @@ def main():
 
     # 指定的repo路径
     repo = Repository(args.repo)
+    
+    # 如果没有指定分支，使用当前checkout的分支
+    if not args.branch and not args.diff and not args.analyze:
+        args.branch = repo.head.shorthand
+        print(f"未指定分支，使用当前checkout的分支: {args.branch}")
 
     if args.branch and not args.commit_hash:
         # 从数据库获取指定分支下的最新 commit_hash
