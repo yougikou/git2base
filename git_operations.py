@@ -211,6 +211,8 @@ def get_git_commits(repo: pygit2.Repository, branch: str, start_commit_hash: str
                     char_length = 0
                     line_count = 0
 
+            print(f"Debug: {file_path} - {delta.status}  - {commit.id} - {pygit2.GIT_DELTA_ADDED} ")
+
             file_data = {
                 'file_path': file_path,
                 'file_type': file_type,  # 使用新的文件类型

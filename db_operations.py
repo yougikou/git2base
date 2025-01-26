@@ -1,8 +1,70 @@
-import psycopg2
-from psycopg2 import pool
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey
+from sqlalchemy.orm import sessionmaker, scoped_session
+from sqlalchemy.ext.declarative import declarative_base
+from contextlib import contextmanager
+
+@contextmanager
+def get_db_connection():
+    """Provide a transactional scope around a series of operations."""
+    session = Session()
+    try:
+        yield session
+        session.commit()
+    except:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
 import yaml
 from contextlib import contextmanager
 import json
+import os
+
+# SQLAlchemy setup
+Base = declarative_base()
+engine = None
+Session = None
+
+# Define database models
+class GitCommit(Base):
+    __tablename__ = 'git_commits'
+    id = Column(Integer, primary_key=True)
+    commit_hash = Column(String(255), unique=True, nullable=False)
+    branch = Column(String(255))
+    commit_date = Column(DateTime)
+    commit_message = Column(Text)
+    author_name = Column(String(255))
+    author_email = Column(String(255))
+
+class GitFile(Base):
+    __tablename__ = 'git_files'
+    id = Column(Integer, primary_key=True)
+    commit_hash_id = Column(Integer, ForeignKey('git_commits.id'))
+    file_path = Column(Text)
+    file_type = Column(String(255))
+    change_type = Column(String(1))
+    char_length = Column(Integer)
+    line_count = Column(Integer)
+    blob_hash = Column(String(255))
+
+class GitDiffFile(Base):
+    __tablename__ = 'git_diff_files'
+    id = Column(Integer, primary_key=True)
+    commit_hash1_id = Column(Integer, ForeignKey('git_commits.id'))
+    commit_hash2_id = Column(Integer, ForeignKey('git_commits.id'))
+    file_path = Column(Text)
+    file_type = Column(String(255))
+    change_type = Column(String(1))
+    line_count1 = Column(Integer)
+    char_length1 = Column(Integer)
+    blob_hash1 = Column(String(255))
+    content_snapshot1 = Column(Text)
+    line_count2 = Column(Integer)
+    char_length2 = Column(Integer)
+    blob_hash2 = Column(String(255))
+    content_snapshot2 = Column(Text)
+    tech_stack = Column(String(255))
 
 # Load database configuration
 def load_db_config():
@@ -15,309 +77,308 @@ def load_analyzer_config():
         config = yaml.safe_load(file)
     return config['analyzers']
 
-# Create database connection pool with cleanup
-connection_pool = None
-
-def initialize_connection_pool():
-    """Initialize the database connection pool with error handling and cleanup"""
-    global connection_pool
-    if connection_pool:
-        return  # Already initialized
+def initialize_db():
+    """Initialize SQLAlchemy database connection"""
+    global engine, Session
     
     config = load_db_config()
-    try:
-        connection_pool = psycopg2.pool.SimpleConnectionPool(
-            minconn=1,
-            maxconn=20,
-            **config
-        )
-        if connection_pool:
-            print("Connection pool created successfully")
-            # Register cleanup on program exit
-            import atexit
-            atexit.register(close_connection_pool)
-    except Exception as e:
-        print(f"Failed to create connection pool: {e}")
-        raise
-
-def close_connection_pool():
-    """Close all connections in the pool"""
-    global connection_pool
-    if connection_pool:
-        try:
-            connection_pool.closeall()
-            print("Connection pool closed successfully")
-        except Exception as e:
-            print(f"Error closing connection pool: {e}")
-        finally:
-            connection_pool = None
-
-# Get and return connection using context manager
-@contextmanager
-def get_db_connection():
-    if not connection_pool:
-        raise Exception("Connection pool is not initialized")
-    connection = connection_pool.getconn()
-    try:
-        yield connection
-    except Exception as e:
-        connection.rollback()
-        raise e
+    
+    # Determine database URL based on config type
+    if config['type'] == 'postgresql':
+        db_url = f"postgresql+psycopg2://{config['postgresql']['user']}:{config['postgresql']['password']}@{config['postgresql']['host']}:{config['postgresql']['port']}/{config['postgresql']['database']}"
+    else:  # SQLite
+        db_url = f"sqlite:///{config['sqlite']['database']}"
+        # Create directory for SQLite if needed
+        os.makedirs(os.path.dirname(config['sqlite']['database']), exist_ok=True)
+    
+    if config['type'] == 'postgresql':
+        engine = create_engine(db_url, pool_size=20, max_overflow=0)
     else:
-        connection.commit()
-    finally:
-        connection_pool.putconn(connection)
+        # SQLite specific configuration
+        engine = create_engine(db_url, pool_size=20, max_overflow=0,
+                        connect_args={"check_same_thread": False})
+    
+    Session = scoped_session(sessionmaker(bind=engine))
+    
+    # Create tables if they don't exist
+    Base.metadata.create_all(engine)
+    
+    # Register cleanup on program exit
+    import atexit
+    atexit.register(close_db)
+    
+    print(f"Database connected: {db_url}")
 
-# Example usage of the improved database connection
-initialize_connection_pool()
+def close_db():
+    """Close database connection"""
+    global engine, Session
+    if engine:
+        try:
+            Session.remove()
+            engine.dispose()
+            print("Database connection closed successfully")
+        except Exception as e:
+            print(f"Error closing database connection: {e}")
+        finally:
+            engine = None
+            Session = None
+
 
 # Database operations SQL
 def reset_database():
-    # 首先删除所有以_results结尾的分析结果表
-    drop_analyzer_tables_query = """
-    DO $$ 
-    DECLARE
-        _table text;
-    BEGIN
-        FOR _table IN 
-            SELECT table_name 
-            FROM information_schema.tables 
-            WHERE table_name LIKE '%_results'
-            AND table_schema = current_schema()
-        LOOP
-            EXECUTE 'DROP TABLE IF EXISTS ' || quote_ident(_table) || ' CASCADE';
-        END LOOP;
-    END $$;
-    """
-
-    # 然后创建基础表
-    create_tables_query = """
-    DROP TABLE IF EXISTS git_diff_files CASCADE;
-    DROP TABLE IF EXISTS git_files CASCADE;
-    DROP TABLE IF EXISTS git_commits CASCADE;
-
-    CREATE TABLE IF NOT EXISTS git_commits (
-        id SERIAL PRIMARY KEY,
-        commit_hash VARCHAR(255) UNIQUE NOT NULL,
-        branch VARCHAR(255),
-        commit_date TIMESTAMP,
-        commit_message TEXT,
-        author_name VARCHAR(255),
-        author_email VARCHAR(255)
-    );
+    """Reset database by dropping and recreating all tables"""
+    config = load_db_config()
     
-    CREATE TABLE IF NOT EXISTS git_files (
-        id SERIAL PRIMARY KEY,
-        commit_hash_id INTEGER REFERENCES git_commits(id),
-        file_path TEXT,
-        file_type VARCHAR(255),
-        change_type CHAR(1),
-        char_length INT,
-        line_count INT,
-        blob_hash VARCHAR(255)
-    );
+    # Drop all tables
+    Base.metadata.drop_all(engine)
     
-    CREATE TABLE IF NOT EXISTS git_diff_files (
-        id SERIAL PRIMARY KEY,
-        commit_hash1_id INTEGER REFERENCES git_commits(id),
-        commit_hash2_id INTEGER REFERENCES git_commits(id),
-        file_path TEXT,
-        file_type VARCHAR(255),
-        change_type CHAR(1),
-        line_count1 INT,
-        char_length1 INT,
-        blob_hash1 VARCHAR(255),
-        content_snapshot1 TEXT,
-        line_count2 INT,
-        char_length2 INT,
-        blob_hash2 VARCHAR(255),
-        content_snapshot2 TEXT,
-        tech_stack VARCHAR(255)
-    );    
-    """
-
-    # 最后创建分析结果表
-    analyzers = load_analyzer_config()
-    for analyzer in analyzers:
-        create_tables_query = f"""
-        {create_tables_query}
-        CREATE TABLE IF NOT EXISTS {analyzer['name']}_results (
-            id SERIAL PRIMARY KEY,
-            diff_file_id INTEGER REFERENCES git_diff_files(id),
-            commit_hash_id INTEGER REFERENCES git_commits(id),
-            count INT,
-            content TEXT
-        );
-        """
+    # Create all tables
+    Base.metadata.create_all(engine)
     
-    # 将所有SQL语句合并
-    create_tables_query = drop_analyzer_tables_query + create_tables_query
-
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(create_tables_query)
-            conn.commit()
+    print("Database reset complete")
 
 def get_commit_id(commit_hash):
-    query = """
-    SELECT id FROM git_commits WHERE commit_hash = %s
-    """
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(query, (commit_hash,))
-            result = cursor.fetchone()
-            if result:
-                return result[0]
-            else:
-                raise ValueError(f"Commit hash {commit_hash} not found in git_commits table.")
+    session = Session()
+    try:
+        result = session.query(GitCommit.id)\
+            .filter(GitCommit.commit_hash == commit_hash)\
+            .first()
+        if result:
+            return result[0]
+        else:
+            raise ValueError(f"Commit hash {commit_hash} not found in git_commits table.")
+    finally:
+        session.close()
 
 def insert_commit(commit_data):
-    query = """
-    INSERT INTO git_commits (commit_hash, branch, commit_date, commit_message, author_name, author_email)
-    VALUES (%s, %s, to_timestamp(%s), %s, %s, %s)
-    """
-    params = (
-        commit_data['commit_hash'],
-        commit_data['branch'],
-        commit_data['commit_date'],
-        commit_data['commit_message'],
-        commit_data['author_name'],
-        commit_data['author_email']
-    )
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            try:
-                cursor.execute(query, params)
-                # 获取插入的提交 ID
-                cursor.execute("SELECT currval('git_commits_id_seq')")
-                commit_id = cursor.fetchone()[0]
-                conn.commit()
-                return commit_id
-            except psycopg2.Error as e:
-                conn.rollback()
-                print(f"Error inserting commit: {e}")
-                raise
+    session = Session()
+    try:
+        # 创建新的GitCommit对象
+        from datetime import datetime
+        commit = GitCommit(
+            commit_hash=commit_data['commit_hash'],
+            branch=commit_data['branch'],
+            commit_date=datetime.fromtimestamp(commit_data['commit_date']),
+            commit_message=commit_data['commit_message'],
+            author_name=commit_data['author_name'],
+            author_email=commit_data['author_email']
+        )
+        
+        # 添加到session并提交
+        session.add(commit)
+        session.commit()
+        
+        # 返回新插入的commit ID
+        return commit.id
+    except Exception as e:
+        session.rollback()
+        print(f"插入提交记录失败: {str(e)}")
+        raise
+    finally:
+        session.close()
 
 def insert_diff_file(diff_file_data):
-    query = """
-    INSERT INTO git_diff_files (commit_hash1_id, commit_hash2_id, file_path, file_type, change_type, 
-                                line_count1, char_length1, blob_hash1, content_snapshot1, 
-                                line_count2, char_length2, blob_hash2, content_snapshot2, tech_stack)
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-    """
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(query, (
-                diff_file_data['commit_hash1_id'],
-                diff_file_data['commit_hash2_id'],
-                diff_file_data['file_path'],
-                diff_file_data['file_type'],
-                diff_file_data['change_type'],
-                diff_file_data['line_count1'],
-                diff_file_data['char_length1'],
-                diff_file_data['blob_hash1'],
-                diff_file_data['content_snapshot1'],
-                diff_file_data['line_count2'],
-                diff_file_data['char_length2'],
-                diff_file_data['blob_hash2'],
-                diff_file_data['content_snapshot2'],
-                diff_file_data['tech_stack']
-            ))
-            # 获取插入的提交 ID
-            cursor.execute("SELECT currval('git_diff_files_id_seq')")
-            commit_id = cursor.fetchone()[0]
-            conn.commit()
-            return commit_id
+    session = Session()
+    try:
+        # 创建新的GitDiffFile对象
+        diff_file = GitDiffFile(
+            commit_hash1_id=diff_file_data['commit_hash1_id'],
+            commit_hash2_id=diff_file_data['commit_hash2_id'],
+            file_path=diff_file_data['file_path'],
+            file_type=diff_file_data['file_type'],
+            change_type=diff_file_data['change_type'],
+            line_count1=diff_file_data['line_count1'],
+            char_length1=diff_file_data['char_length1'],
+            blob_hash1=diff_file_data['blob_hash1'],
+            content_snapshot1=diff_file_data['content_snapshot1'],
+            line_count2=diff_file_data['line_count2'],
+            char_length2=diff_file_data['char_length2'],
+            blob_hash2=diff_file_data['blob_hash2'],
+            content_snapshot2=diff_file_data['content_snapshot2'],
+            tech_stack=diff_file_data['tech_stack']
+        )
+        
+        # 添加到session并提交
+        session.add(diff_file)
+        session.commit()
+        
+        # 返回新插入的diff文件ID
+        return diff_file.id
+    except Exception as e:
+        session.rollback()
+        print(f"插入diff文件记录失败: {str(e)}")
+        raise
+    finally:
+        session.close()
 
 def insert_diff_files(diff_files_data):
-    query = """
-    INSERT INTO git_diff_files (commit_hash1_id, commit_hash2_id, file_path, file_type, change_type, 
-                                line_count1, char_length1, blob_hash1, content_snapshot1, 
-                                line_count2, char_length2, blob_hash2, content_snapshot2, tech_stack)
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-    """
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.executemany(query, diff_files_data)
-            # 获取插入的提交 ID
-            cursor.execute("SELECT currval('git_diff_files_id_seq')")
-            commit_id = cursor.fetchone()[0]
-            conn.commit()
-            return commit_id
+    session = Session()
+    try:
+        # 批量创建GitDiffFile对象
+        diff_files = [
+            GitDiffFile(
+                commit_hash1_id=data['commit_hash1_id'],
+                commit_hash2_id=data['commit_hash2_id'],
+                file_path=data['file_path'],
+                file_type=data['file_type'],
+                change_type=data['change_type'],
+                line_count1=data['line_count1'],
+                char_length1=data['char_length1'],
+                blob_hash1=data['blob_hash1'],
+                content_snapshot1=data['content_snapshot1'],
+                line_count2=data['line_count2'],
+                char_length2=data['char_length2'],
+                blob_hash2=data['blob_hash2'],
+                content_snapshot2=data['content_snapshot2'],
+                tech_stack=data['tech_stack']
+            )
+            for data in diff_files_data
+        ]
+        
+        # 批量添加到session并提交
+        session.bulk_save_objects(diff_files)
+        session.commit()
+        
+        # 返回插入的记录数
+        return len(diff_files)
+    except Exception as e:
+        session.rollback()
+        print(f"批量插入diff文件记录失败: {str(e)}")
+        raise
+    finally:
+        session.close()
 
 def remove_diff_file_snapshot(diff_id):
-    query = """
-    UPDATE git_diff_files SET content_snapshot1 = NULL, content_snapshot2 = NULL
-    WHERE id = %s;
-    """
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(query, (diff_id,))
-            conn.commit()
+    session = Session()
+    try:
+        # 获取要更新的diff文件
+        diff_file = session.query(GitDiffFile)\
+            .filter(GitDiffFile.id == diff_id)\
+            .first()
+        
+        if diff_file:
+            # 清空快照内容
+            diff_file.content_snapshot1 = None
+            diff_file.content_snapshot2 = None
+            session.commit()
+    except Exception as e:
+        session.rollback()
+        print(f"清除diff文件快照失败: {str(e)}")
+        raise
+    finally:
+        session.close()
 
 def insert_commit_and_files(commit_data, file_data_list):
-    commit_query = """
-    INSERT INTO git_commits (commit_hash, branch, commit_date, commit_message, author_name, author_email)
-    VALUES (%s, %s, to_timestamp(%s), %s, %s, %s) RETURNING id
-    """
-    file_query = """
-    INSERT INTO git_files (commit_hash_id, file_path, file_type, change_type, char_length, line_count, blob_hash)
-    VALUES (%s, %s, %s, %s, %s, %s, %s)
-    """
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(commit_query, (
-                commit_data['commit_hash'],
-                commit_data['branch'],
-                commit_data['commit_date'],
-                commit_data['commit_message'],
-                commit_data['author_name'],
-                commit_data['author_email']
-            ))
-            # 获取插入的提交 ID
-            cursor.execute("SELECT currval('git_commits_id_seq')")
-            commit_id = cursor.fetchone()[0]
-
-            for file_data in file_data_list:
-                cursor.execute(file_query, (
-                    commit_id,
-                    file_data['file_path'],
-                    file_data['file_type'],
-                    file_data['change_type'],
-                    file_data['char_length'],
-                    file_data['line_count'],
-                    file_data['blob_hash']
-                ))
-            conn.commit()
+    session = Session()
+    try:
+        # 创建并插入提交记录
+        from datetime import datetime
+        commit = GitCommit(
+            commit_hash=commit_data['commit_hash'],
+            branch=commit_data['branch'],
+            commit_date=datetime.fromtimestamp(commit_data['commit_date']),
+            commit_message=commit_data['commit_message'],
+            author_name=commit_data['author_name'],
+            author_email=commit_data['author_email']
+        )
+        session.add(commit)
+        session.flush()  # 获取commit ID
+        
+        # 批量创建并插入文件记录
+        files = [
+            GitFile(
+                commit_hash_id=commit.id,
+                file_path=file_data['file_path'],
+                file_type=file_data['file_type'],
+                change_type=file_data['change_type'],
+                char_length=file_data['char_length'],
+                line_count=file_data['line_count'],
+                blob_hash=file_data['blob_hash']
+            )
+            for file_data in file_data_list
+        ]
+        session.bulk_save_objects(files)
+        
+        session.commit()
+        return commit.id
+    except Exception as e:
+        session.rollback()
+        print(f"插入提交及文件记录失败: {str(e)}")
+        raise
+    finally:
+        session.close()
 
 def get_latest_commit_hash_from_db(branch):
-    query = """
-    SELECT commit_hash FROM git_commits WHERE branch = %s ORDER BY commit_date DESC LIMIT 1
+    """获取指定分支的最新提交hash
+    
+    Args:
+        branch: 分支名称
+        
+    Returns:
+        str: 最新提交的hash值，如果分支不存在则返回None
     """
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(query, (branch,))
-            result = cursor.fetchone()
-            return result[0] if result else None
+    session = Session()
+    try:
+        # 查询指定分支的最新提交
+        result = session.query(GitCommit.commit_hash)\
+            .filter(GitCommit.branch == branch)\
+            .order_by(GitCommit.commit_date.desc())\
+            .first()
+            
+        return result[0] if result else None
+    except Exception as e:
+        print(f"获取最新提交hash失败: {str(e)}")
+        raise
+    finally:
+        session.close()
 
 def commit_exists_in_db(commit_hash):
-    query = """
-    SELECT 1 FROM git_commits WHERE commit_hash = %s LIMIT 1
+    """检查提交是否已存在于数据库中
+    
+    Args:
+        commit_hash: 提交的hash值
+        
+    Returns:
+        bool: 如果提交存在返回True，否则返回False
     """
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(query, (commit_hash,))
-            result = cursor.fetchone()
-            return result is not None
+    session = Session()
+    try:
+        # 查询是否存在指定hash的提交
+        result = session.query(GitCommit)\
+            .filter(GitCommit.commit_hash == commit_hash)\
+            .first()
+            
+        return result is not None
+    except Exception as e:
+        print(f"检查提交是否存在失败: {str(e)}")
+        raise
+    finally:
+        session.close()
 
 def get_diff_data(commit_hash1, commit_hash2):
-    query = """
-    SELECT * FROM git_diff_files WHERE commit_hash1_id = %s AND commit_hash2_id = %s
+    """获取两个提交之间的差异数据
+    
+    Args:
+        commit_hash1: 第一个提交的hash值
+        commit_hash2: 第二个提交的hash值
+        
+    Returns:
+        list: 包含所有差异文件的列表，如果没有差异则返回空列表
     """
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(query, (commit_hash1, commit_hash2))
-            return cursor.fetchall()
+    session = Session()
+    try:
+        # 查询两个提交之间的所有差异文件
+        result = session.query(GitDiffFile)\
+            .filter(GitDiffFile.commit_hash1_id == commit_hash1)\
+            .filter(GitDiffFile.commit_hash2_id == commit_hash2)\
+            .all()
+            
+        return result
+    except Exception as e:
+        print(f"获取差异数据失败: {str(e)}")
+        raise
+    finally:
+        session.close()
 
 def save_analysis_result(analyzer_name: str, diff_id: int, commit_hash1_id: int, commit_hash2_id: int, count1: int, result1: dict, count2: int, result2: dict) -> bool:
     """Securely save analysis results with validation
@@ -343,30 +404,66 @@ def save_analysis_result(analyzer_name: str, diff_id: int, commit_hash1_id: int,
     if not all(isinstance(id, int) and id > 0 for id in [diff_id, commit_hash1_id, commit_hash2_id]):
         raise ValueError("IDs must be positive integers")
         
+    session = Session()
     try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cursor:
-                # Use parameterized table name with psycopg2's quote_ident
-                table_name = psycopg2.extensions.quote_ident(analyzer_name.lower() + '_results', conn)
-                
-                insert_sql = f"""
-                    INSERT INTO {table_name} (diff_file_id, commit_hash_id, count, content)
-                    VALUES (%s, %s, %s, %s)
-                """
-                
-                # Execute with parameterized values
-                cursor.execute(insert_sql, (diff_id, commit_hash1_id, count1, json.dumps(result1)))
-                cursor.execute(insert_sql, (diff_id, commit_hash2_id, count2, json.dumps(result2)))
-                conn.commit()
-                return True
-                
+        # 动态获取表模型
+        table = Base.metadata.tables[analyzer_name.lower() + '_results']
+        
+        # 插入第一条结果
+        session.execute(table.insert(), {
+            'diff_file_id': diff_id,
+            'commit_hash_id': commit_hash1_id,
+            'count': count1,
+            'content': json.dumps(result1)
+        })
+        
+        # 插入第二条结果
+        session.execute(table.insert(), {
+            'diff_file_id': diff_id,
+            'commit_hash_id': commit_hash2_id,
+            'count': count2,
+            'content': json.dumps(result2)
+        })
+        
+        session.commit()
+        return True
     except Exception as e:
+        session.rollback()
         print(f"保存分析结果失败: {str(e)}")
         return False
+    finally:
+        session.close()
     
 def analysis_exists(analyzer_name: str, diff_id: int) -> bool:
-    query = f"SELECT 1 FROM {analyzer_name}_results WHERE diff_file_id = %s LIMIT 1"
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(query, (diff_id,))
-            return cursor.fetchone() is not None
+    """检查指定分析器是否已经分析过某个diff文件
+    
+    Args:
+        analyzer_name: 分析器名称
+        diff_id: diff文件ID
+        
+    Returns:
+        bool: 如果已经分析过返回True，否则返回False
+    """
+    session = Session()
+    try:
+        # 验证分析器名称合法性
+        if not isinstance(analyzer_name, str) or not analyzer_name.replace('_', '').isalnum():
+            raise ValueError(f"Invalid analyzer name: {analyzer_name}")
+            
+        # 验证diff_id是否为正整数
+        if not isinstance(diff_id, int) or diff_id <= 0:
+            raise ValueError("diff_id must be a positive integer")
+            
+        # 使用SQLAlchemy的exists查询
+        exists = session.query(
+            session.query(analyzer_name + '_results')
+            .filter_by(diff_file_id=diff_id)
+            .exists()
+        ).scalar()
+        
+        return exists
+    except Exception as e:
+        print(f"检查分析结果是否存在失败: {str(e)}")
+        raise
+    finally:
+        session.close()

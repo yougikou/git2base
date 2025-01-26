@@ -1,9 +1,13 @@
 database:
-  host: "localhost"
-  port: 5432
-  database: "gitbase"
-  user: "gituser"
-  password: "giko"
+  type: "sqlite"  # 支持postgresql或sqlite
+  postgresql:
+    host: "localhost"
+    port: 5432
+    database: "gitbase"
+    user: "gituser"
+    password: "giko"
+  sqlite:
+    database: "/Users/yougikou/Documents/Github/git2base/gitbase.db"  # SQLite数据库文件路径
 
 stacks:
   # - name: Assets
