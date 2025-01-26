@@ -179,14 +179,17 @@ def get_git_commits(repo: pygit2.Repository, branch: str, start_commit_hash: str
 
         # 获取提交的 diff
         if commit.parents:
-            diff = commit.tree.diff_to_tree(commit.parents[0].tree)
+            # diff = commit.tree.diff_to_tree(commit.parents[0].tree)
+            diff = commit.parents[0].tree.diff_to_tree(commit.tree)
         else:
-            diff = commit.tree.diff_to_tree()
+            # diff = commit.tree.diff_to_tree()
+            empty_tree = repo.TreeBuilder().write()
+            diff = repo[empty_tree].diff_to_tree(commit.tree)
 
         files = []
         for delta in diff.deltas:
             file_path = delta.new_file.path if delta.status != pygit2.GIT_DELTA_DELETED else delta.old_file.path
-            file_type = get_file_type(file_path)  # 使用新函数获取文件类型
+            file_type = get_file_type(file_path) 
 
             try:
                 blob = repo[delta.new_file.id] if delta.status != pygit2.GIT_DELTA_DELETED else None
@@ -210,8 +213,6 @@ def get_git_commits(repo: pygit2.Repository, branch: str, start_commit_hash: str
                     blob_hash = '<deleted>'
                     char_length = 0
                     line_count = 0
-
-            # print(f"Debug: {file_path} - {delta.status}  - {commit.id} - {pygit2.GIT_DELTA_ADDED} ")
 
             file_data = {
                 'file_path': file_path,
