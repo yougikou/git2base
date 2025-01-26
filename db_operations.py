@@ -1,5 +1,5 @@
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey
-from sqlalchemy.orm import sessionmaker, scoped_session
+from sqlalchemy import JSON, create_engine, Column, Integer, String, Text, DateTime, ForeignKey, func, inspect, text
+from sqlalchemy.orm import sessionmaker, scoped_session, aliased
 from sqlalchemy.ext.declarative import declarative_base
 from contextlib import contextmanager
 
@@ -26,9 +26,19 @@ Base = declarative_base()
 engine = None
 Session = None
 
+# Define base analyzer result model
+class AnalyzerResultBase(Base):
+    __abstract__ = True
+    id = Column(Integer, primary_key=True)
+    diff_file_id = Column(Integer, ForeignKey('git_diff_file.id'), nullable=False)
+    commit_id = Column(Integer, ForeignKey('git_commit.id'), nullable=False)
+    count = Column(Integer, nullable=False)
+    content = Column(JSON, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
 # Define database models
 class GitCommit(Base):
-    __tablename__ = 'git_commits'
+    __tablename__ = 'git_commit'
     id = Column(Integer, primary_key=True)
     commit_hash = Column(String(255), unique=True, nullable=False)
     branch = Column(String(255))
@@ -38,9 +48,9 @@ class GitCommit(Base):
     author_email = Column(String(255))
 
 class GitFile(Base):
-    __tablename__ = 'git_files'
+    __tablename__ = 'git_file'
     id = Column(Integer, primary_key=True)
-    commit_hash_id = Column(Integer, ForeignKey('git_commits.id'))
+    commit_id = Column(Integer, ForeignKey('git_commit.id'))
     file_path = Column(Text)
     file_type = Column(String(255))
     change_type = Column(String(1))
@@ -49,10 +59,10 @@ class GitFile(Base):
     blob_hash = Column(String(255))
 
 class GitDiffFile(Base):
-    __tablename__ = 'git_diff_files'
+    __tablename__ = 'git_diff_file'
     id = Column(Integer, primary_key=True)
-    commit_hash1_id = Column(Integer, ForeignKey('git_commits.id'))
-    commit_hash2_id = Column(Integer, ForeignKey('git_commits.id'))
+    commit_1_id = Column(Integer, ForeignKey('git_commit.id'))
+    commit_2_id = Column(Integer, ForeignKey('git_commit.id'))
     file_path = Column(Text)
     file_type = Column(String(255))
     change_type = Column(String(1))
@@ -68,12 +78,12 @@ class GitDiffFile(Base):
 
 # Load database configuration
 def load_db_config():
-    with open('config.yaml', 'r') as file:
+    with open('config.yaml', 'r', encoding='utf-8') as file:
         config = yaml.safe_load(file)
     return config['database']
 
 def load_analyzer_config():
-    with open('config.yaml', 'r') as file:
+    with open('config.yaml', 'r', encoding='utf-8') as file:
         config = yaml.safe_load(file)
     return config['analyzers']
 
@@ -125,17 +135,90 @@ def close_db():
 
 
 # Database operations SQL
+# 缓存已创建的模型类
+_analyzer_model_cache = {}
+
+def create_analyzer_result_model(analyzer_name: str) -> type:
+    """Dynamically create analyzer result model class with caching
+    
+    Args:
+        analyzer_name: Name of the analyzer
+        
+    Returns:
+        type: SQLAlchemy model class for the analyzer results
+        
+    Note:
+        This function caches created models to ensure consistent types
+        and improve performance when called multiple times with the same
+        analyzer name.
+    """
+    # 检查缓存
+    if analyzer_name in _analyzer_model_cache:
+        return _analyzer_model_cache[analyzer_name]
+        
+    # 创建新模型类
+    class_name = f"{analyzer_name.capitalize()}Result"
+    model = type(
+        class_name,
+        (AnalyzerResultBase,),
+        {
+            "__tablename__": f"{analyzer_name.lower()}_result",
+            "__table_args__": {"extend_existing": True}
+        }
+    )
+    
+    # 缓存模型类
+    _analyzer_model_cache[analyzer_name] = model
+    
+    return model
+
 def reset_database():
     """Reset database by dropping and recreating all tables"""
     config = load_db_config()
-    
-    # Drop all tables
-    Base.metadata.drop_all(engine)
-    
-    # Create all tables
-    Base.metadata.create_all(engine)
-    
-    print("Database reset complete")
+
+    # 获取所有表名
+    inspector = inspect(engine)
+    all_tables = inspector.get_table_names()
+
+    # 定义表删除顺序（确保依赖表在前）
+    core_tables = [
+        "git_diff_file",
+        "git_file", 
+        "git_commit"
+    ]
+
+    # 获取所有analyzer结果表（以analyzer name开头，以_result结尾）
+    analyzer_tables = [
+        table for table in all_tables
+        if table.endswith('_result') and table != 'git_diff_file'
+    ]
+
+    # 合并表删除顺序
+    table_order = analyzer_tables + core_tables
+
+    try:
+        with engine.connect() as conn:
+            conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+            for table in table_order:
+                print(f"DROP TABLE IF EXISTS {table};")
+                conn.execute(text(f"DROP TABLE IF EXISTS {table};"))
+        
+        # 重新创建核心表
+        Base.metadata.create_all(engine)
+        print(f"Table created (core): {', '.join(core_tables)}")
+        
+        # 动态创建并注册analyzer结果表模型
+        for analyzer in load_analyzer_config():
+            analyzer_name = analyzer['name'].lower()
+            table_name = f"{analyzer_name}_result"
+            
+            model = create_analyzer_result_model(analyzer_name)
+            model.__table__.create(engine)
+            print(f"Table created (analysis result): {table_name}")
+        
+        print("Database reset complete")
+    except Exception as e:
+        print(f"An error occurred: {e}")
 
 def get_commit_id(commit_hash):
     session = Session()
@@ -146,7 +229,7 @@ def get_commit_id(commit_hash):
         if result:
             return result[0]
         else:
-            raise ValueError(f"Commit hash {commit_hash} not found in git_commits table.")
+            raise ValueError(f"Commit hash {commit_hash} not found in git_commit table.")
     finally:
         session.close()
 
@@ -182,8 +265,8 @@ def insert_diff_file(diff_file_data):
     try:
         # 创建新的GitDiffFile对象
         diff_file = GitDiffFile(
-            commit_hash1_id=diff_file_data['commit_hash1_id'],
-            commit_hash2_id=diff_file_data['commit_hash2_id'],
+            commit_1_id=diff_file_data['commit_1_id'],
+            commit_2_id=diff_file_data['commit_2_id'],
             file_path=diff_file_data['file_path'],
             file_type=diff_file_data['file_type'],
             change_type=diff_file_data['change_type'],
@@ -217,8 +300,8 @@ def insert_diff_files(diff_files_data):
         # 批量创建GitDiffFile对象
         diff_files = [
             GitDiffFile(
-                commit_hash1_id=data['commit_hash1_id'],
-                commit_hash2_id=data['commit_hash2_id'],
+                commit_1_id=data['commit_1_id'],
+                commit_2_id=data['commit_2_id'],
                 file_path=data['file_path'],
                 file_type=data['file_type'],
                 change_type=data['change_type'],
@@ -287,7 +370,7 @@ def insert_commit_and_files(commit_data, file_data_list):
         # 批量创建并插入文件记录
         files = [
             GitFile(
-                commit_hash_id=commit.id,
+                commit_id=commit.id,
                 file_path=file_data['file_path'],
                 file_type=file_data['file_type'],
                 change_type=file_data['change_type'],
@@ -367,10 +450,16 @@ def get_diff_data(commit_hash1, commit_hash2):
     """
     session = Session()
     try:
-        # 查询两个提交之间的所有差异文件
+        # 创建GitCommit表的别名
+        commit1 = aliased(GitCommit)
+        commit2 = aliased(GitCommit)
+        
+        # 通过join GitCommit表将commit_hash转换为id
         result = session.query(GitDiffFile)\
-            .filter(GitDiffFile.commit_hash1_id == commit_hash1)\
-            .filter(GitDiffFile.commit_hash2_id == commit_hash2)\
+            .join(commit1, GitDiffFile.commit_1_id == commit1.id)\
+            .filter(commit1.commit_hash == commit_hash1)\
+            .join(commit2, GitDiffFile.commit_2_id == commit2.id)\
+            .filter(commit2.commit_hash == commit_hash2)\
             .all()
             
         return result
@@ -380,14 +469,14 @@ def get_diff_data(commit_hash1, commit_hash2):
     finally:
         session.close()
 
-def save_analysis_result(analyzer_name: str, diff_id: int, commit_hash1_id: int, commit_hash2_id: int, count1: int, result1: dict, count2: int, result2: dict) -> bool:
+def save_analysis_result(analyzer_name: str, diff_id: int, commit_1_id: int, commit_2_id: int, count1: int, result1: dict, count2: int, result2: dict) -> bool:
     """Securely save analysis results with validation
     
     Args:
         analyzer_name: Name of the analyzer (must be alphanumeric with underscores)
         diff_id: ID of the diff file
-        commit_hash1_id: ID of the first commit
-        commit_hash2_id: ID of the second commit
+        commit_1_id: ID of the first commit
+        commit_2_id: ID of the second commit
         count1: Analysis count for first commit
         result1: Analysis result dict for first commit
         count2: Analysis count for second commit
@@ -401,29 +490,37 @@ def save_analysis_result(analyzer_name: str, diff_id: int, commit_hash1_id: int,
         raise ValueError(f"Invalid analyzer name: {analyzer_name}")
         
     # Validate IDs are positive integers
-    if not all(isinstance(id, int) and id > 0 for id in [diff_id, commit_hash1_id, commit_hash2_id]):
+    if not all(isinstance(id, int) and id > 0 for id in [diff_id, commit_1_id, commit_2_id]):
         raise ValueError("IDs must be positive integers")
         
     session = Session()
     try:
-        # 动态获取表模型
-        table = Base.metadata.tables[analyzer_name.lower() + '_results']
+        # 动态创建模型类
+        model = create_analyzer_result_model(analyzer_name)
+        
+        # 检查表是否存在
+        inspector = inspect(engine)
+        if model.__tablename__ not in inspector.get_table_names():
+            # 如果表不存在则创建
+            model.__table__.create(engine)
         
         # 插入第一条结果
-        session.execute(table.insert(), {
-            'diff_file_id': diff_id,
-            'commit_hash_id': commit_hash1_id,
-            'count': count1,
-            'content': json.dumps(result1)
-        })
+        result1_obj = model(
+            diff_file_id=diff_id,
+            commit_id=commit_1_id,
+            count=count1,
+            content=result1
+        )
+        session.add(result1_obj)
         
         # 插入第二条结果
-        session.execute(table.insert(), {
-            'diff_file_id': diff_id,
-            'commit_hash_id': commit_hash2_id,
-            'count': count2,
-            'content': json.dumps(result2)
-        })
+        result2_obj = model(
+            diff_file_id=diff_id,
+            commit_id=commit_2_id,
+            count=count2,
+            content=result2
+        )
+        session.add(result2_obj)
         
         session.commit()
         return True
@@ -454,9 +551,17 @@ def analysis_exists(analyzer_name: str, diff_id: int) -> bool:
         if not isinstance(diff_id, int) or diff_id <= 0:
             raise ValueError("diff_id must be a positive integer")
             
+        # 动态创建模型类
+        model = create_analyzer_result_model(analyzer_name)
+        
+        # 检查表是否存在
+        inspector = inspect(engine)
+        if model.__tablename__ not in inspector.get_table_names():
+            return False
+            
         # 使用SQLAlchemy的exists查询
         exists = session.query(
-            session.query(analyzer_name + '_results')
+            session.query(model)
             .filter_by(diff_file_id=diff_id)
             .exists()
         ).scalar()

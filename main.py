@@ -34,7 +34,7 @@ def main():
     repo = Repository(args.repo)
     
     # 如果没有指定分支，使用当前checkout的分支
-    if not args.branch:
+    if not args.branch and not args.diff and not args.analyze:
         args.branch = repo.head.shorthand
         print(f"未指定分支，使用当前checkout的分支: {args.branch}")
 

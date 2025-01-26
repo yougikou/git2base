@@ -48,25 +48,32 @@ git_diff_files:
 
 - 重置数据库：
 ```bash
-python main.py --reset
+python main.py --reset-db
 ```
 
-- 从起始/最新提交提取分支提交历史：
+- 从起始/最新提交提取分支提交历史（如果省略--branch则使用当前检出分支）：
 ```bash
+python main.py --repo /path/to/repo
 python main.py --repo /path/to/repo --branch <branch-name>
 ```
 
-- 从特定提交提取分支提交历史：
+- 从特定提交提取分支提交历史（如果省略--branch则使用当前检出分支，指定哈希如果不存在当前分支则会报错）：
 ```bash
+python main.py --repo /path/to/repo --commit_hash <hash>
 python main.py --repo /path/to/repo --branch <branch-name> --commit_hash <hash>
 ```
 
-- 提取两个提交之间的差异：
+- 提取两个提交之间的差异（哈希值可以唯一代表特定分支的特定提交，故省略分支指定）：
 ```bash
 python main.py --repo /path/to/repo --diff <hash1> <hash2>
 ```
 
-- 分析现有差异：
+- 提取两个提交之间的差异，并执行分析器进行分析：
+```bash
+python main.py --repo /path/to/repo --diff <hash1> <hash2> --analyze
+```
+
+- 已经执行--diff获取差异数据的情况下，单独执行--analyze：
 ```bash
 python main.py --analyze <hash1> <hash2>
 ```
