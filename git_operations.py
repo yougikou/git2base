@@ -1,6 +1,7 @@
 import os
 import importlib
 import threading
+import traceback
 import pygit2
 import yaml
 from db_operations import get_commit_id, insert_commit, commit_exists_in_db, insert_commit_and_files, insert_diff_file, get_diff_data,save_analysis_result, analysis_exists, remove_diff_file_snapshot
@@ -108,6 +109,113 @@ def get_branch_name_for_commit(repo, commit_hash):
             return 'unknown'  # 若未找到任何分支，返回 'unknown'
     except KeyError:
         return 'unknown'
+
+def get_git_commits_ui(repo, branch: str = None, density: str = "全部", show_only_current: bool = False):
+    try:
+        if not branch or not isinstance(branch, str):
+            # 未指定分支时，获取所有分支提交
+            commits_data = {}
+            for b in repo.branches.local:
+                branch_commits = get_git_commits_data(repo, b)
+                for commit in branch_commits:
+                    commit_hash = commit['commit_hash']
+                    if commit_hash not in commits_data:
+                        commits_data[commit_hash] = commit
+                    else:
+                        # 如果提交已存在，合并分支信息
+                        commits_data[commit_hash]['branch'] += f", {b}"
+            
+            commits = sorted(commits_data.values(), key=lambda x: x['commit_date'], reverse=True)
+        else:
+            if show_only_current:
+                # 仅显示当前分支提交
+                commits = sorted(get_git_commits_data(repo, branch), key=lambda x: x['commit_date'], reverse=True)
+            else:
+                # 以当前分支为主体，合并其他分支的不同提交
+                main_commits = get_git_commits_data(repo, branch)
+                main_commit_hashes = {c['commit_hash'] for c in main_commits}
+                
+                # 获取其他分支的不同提交
+                other_commits = []
+                for b in repo.branches.local:
+                    if b == branch:
+                        continue
+                    branch_commits = get_git_commits_data(repo, b)
+                    for commit in branch_commits:
+                        if commit['commit_hash'] not in main_commit_hashes:
+                            other_commits.append(commit)
+                        else:
+                            # 如果提交已存在，合并分支信息
+                            for main_commit in main_commits:
+                                if main_commit['commit_hash'] == commit['commit_hash']:
+                                    main_commit['branch'] += f", {b}"
+                                    break
+                
+                # 合并提交并按时间排序
+                commits = sorted(main_commits + other_commits, key=lambda x: x['commit_date'], reverse=True)
+        
+        # 根据密度筛选提交
+        if density != "全部":
+            filtered_commits = []
+            last_date = None
+            
+            for commit in commits:
+                commit_date = commit['commit_date']
+                
+                if last_date is None:
+                    last_date = commit_date
+                    filtered_commits.append(commit)
+                    continue
+                    
+                time_diff = commit_date - last_date
+                if density == "1周" and time_diff < 604800:
+                    continue
+                elif density == "2周" and time_diff < 1209600:
+                    continue
+                elif density == "1个月" and time_diff < 2592000:
+                    continue
+                elif density == "3个月" and time_diff < 7776000:
+                    continue
+                elif density == "6个月" and time_diff < 15552000:
+                    continue
+                elif density == "1年" and time_diff < 31536000:
+                    continue
+                    
+                last_date = commit_date
+                filtered_commits.append(commit)
+                
+            return filtered_commits
+            
+        return commits
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        traceback.print_exc()
+
+def get_git_commits_data(repo, branch: str):
+    if not repo or not isinstance(repo, pygit2.Repository):
+        raise ValueError("Invalid repository instance")
+    
+    if not branch or not isinstance(branch, str):
+        raise ValueError("Invalid branch name")
+
+    branch_ref = repo.lookup_reference(f'refs/heads/{branch}')
+    if not branch_ref:
+        raise ValueError(f"Branch {branch} not found")
+    
+    commits_data = []
+    walker = repo.walk(branch_ref.target, pygit2.GIT_SORT_TIME)
+    for commit in walker:
+        commit_data = {
+            'commit_hash': str(commit.id),
+            'branch': branch,
+            'commit_date': commit.commit_time,
+            'commit_message': commit.message,
+            'author_name': commit.author.name,
+            'author_email': commit.author.email
+        }
+        commits_data.append(commit_data)
+    return commits_data
+
 
 def get_git_commits(repo: pygit2.Repository, branch: str, start_commit_hash: str = None) -> int:
     """Process git commits from a branch with robust error handling
