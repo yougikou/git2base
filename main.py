@@ -3,6 +3,7 @@ from git_operations import get_git_commits, get_git_diff, analyze_existing_diffs
 from db_operations import reset_database, get_latest_commit_hash_from_db, insert_diff_files
 from pygit2 import Repository
 from utils import parse_short_hash
+from gui import main as gui_main
 
 def main():
     parser = argparse.ArgumentParser(description='Git 数据库导入工具')
@@ -12,8 +13,14 @@ def main():
     parser.add_argument('--commit_hash', type=str, help='指定commit hash，支持短hash')
     parser.add_argument('--diff', nargs=2, metavar=('commit_hash1', 'commit_hash2'), help='比较两个commit的差异，支持短hash')
     parser.add_argument('--analyze', nargs='*', metavar=('commit_hash1', 'commit_hash2'), help='分析已有的diff结果，支持短hash。或者在diff时指定analyze参数，直接分析diff结果')
+    parser.add_argument('--gui', action='store_true', help='启动图形用户界面')
 
     args = parser.parse_args()
+
+    # 如果指定了--gui参数，启动GUI
+    if args.gui:
+        gui_main()
+        return
 
     # 初始化数据库连接
     from db_operations import initialize_db
