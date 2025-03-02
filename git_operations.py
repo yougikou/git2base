@@ -112,79 +112,78 @@ def get_branch_name_for_commit(repo, commit_hash):
 
 def get_git_commits_ui(repo, branch: str = None, density: str = "全部", show_only_current: bool = False):
     try:
-        if not branch or not isinstance(branch, str):
-            # 未指定分支时，获取所有分支提交
-            commits_data = {}
-            for b in repo.branches.local:
-                branch_commits = get_git_commits_data(repo, b)
-                for commit in branch_commits:
-                    commit_hash = commit['commit_hash']
-                    if commit_hash not in commits_data:
-                        commits_data[commit_hash] = commit
-                    else:
-                        # 如果提交已存在，合并分支信息
+        # 使用字典存储提交，key为commit_hash，value为提交数据
+        commits_data = {}
+        
+        # 获取所有分支
+        all_branches = list(repo.branches.local)
+        
+        # 遍历所有分支
+        for b in all_branches:
+            branch_commits = get_git_commits_data(repo, b)
+            for commit in branch_commits:
+                commit_hash = commit['commit_hash']
+                
+                if commit_hash in commits_data:
+                    # 如果提交已存在，合并分支信息
+                    existing_branches = commits_data[commit_hash]['branch'].split(', ')
+                    if b not in existing_branches:
                         commits_data[commit_hash]['branch'] += f", {b}"
-            
-            commits = sorted(commits_data.values(), key=lambda x: x['commit_date'], reverse=True)
-        else:
-            if show_only_current:
-                # 仅显示当前分支提交
-                commits = sorted(get_git_commits_data(repo, branch), key=lambda x: x['commit_date'], reverse=True)
-            else:
-                # 以当前分支为主体，合并其他分支的不同提交
-                main_commits = get_git_commits_data(repo, branch)
-                main_commit_hashes = {c['commit_hash'] for c in main_commits}
-                
-                # 获取其他分支的不同提交
-                other_commits = []
-                for b in repo.branches.local:
-                    if b == branch:
-                        continue
-                    branch_commits = get_git_commits_data(repo, b)
-                    for commit in branch_commits:
-                        if commit['commit_hash'] not in main_commit_hashes:
-                            other_commits.append(commit)
-                        else:
-                            # 如果提交已存在，合并分支信息
-                            for main_commit in main_commits:
-                                if main_commit['commit_hash'] == commit['commit_hash']:
-                                    main_commit['branch'] += f", {b}"
-                                    break
-                
-                # 合并提交并按时间排序
-                commits = sorted(main_commits + other_commits, key=lambda x: x['commit_date'], reverse=True)
+                else:
+                    # 新提交，初始化分支信息
+                    commit['branch'] = b
+                    commits_data[commit_hash] = commit
+        
+        # 转换为列表并按时间排序
+        commits = sorted(commits_data.values(), key=lambda x: x['commit_date'], reverse=True)
+        
+        # 如果指定了分支且需要仅显示当前分支
+        if branch and show_only_current:
+            commits = [c for c in commits if branch in c['branch'].split(', ')]
         
         # 根据密度筛选提交
         if density != "全部":
             filtered_commits = []
-            last_date = None
+            # 为每个分支维护最后显示时间
+            branch_last_dates = {}
             
-            for commit in commits:
+            # 按时间顺序遍历提交
+            for commit in sorted(commits, key=lambda x: x['commit_date']):
                 commit_date = commit['commit_date']
+                branches = commit['branch'].split(', ')
                 
-                if last_date is None:
-                    last_date = commit_date
+                # 检查每个分支是否需要显示
+                show_commit = False
+                for branch in branches:
+                    last_date = branch_last_dates.get(branch)
+                    
+                    # 如果分支没有最后显示时间，或者时间差超过间隔
+                    if last_date is None:
+                        show_commit = True
+                        branch_last_dates[branch] = commit_date
+                    else:
+                        time_diff = commit_date - last_date
+                        if density == "1周" and time_diff >= 604800:
+                            show_commit = True
+                        elif density == "2周" and time_diff >= 1209600:
+                            show_commit = True
+                        elif density == "1个月" and time_diff >= 2592000:
+                            show_commit = True
+                        elif density == "3个月" and time_diff >= 7776000:
+                            show_commit = True
+                        elif density == "6个月" and time_diff >= 15552000:
+                            show_commit = True
+                        elif density == "1年" and time_diff >= 31536000:
+                            show_commit = True
+                            
+                        if show_commit:
+                            branch_last_dates[branch] = commit_date
+                
+                if show_commit:
                     filtered_commits.append(commit)
-                    continue
                     
-                time_diff = commit_date - last_date
-                if density == "1周" and time_diff < 604800:
-                    continue
-                elif density == "2周" and time_diff < 1209600:
-                    continue
-                elif density == "1个月" and time_diff < 2592000:
-                    continue
-                elif density == "3个月" and time_diff < 7776000:
-                    continue
-                elif density == "6个月" and time_diff < 15552000:
-                    continue
-                elif density == "1年" and time_diff < 31536000:
-                    continue
-                    
-                last_date = commit_date
-                filtered_commits.append(commit)
-                
-            return filtered_commits
+            # 按时间倒序返回
+            return sorted(filtered_commits, key=lambda x: x['commit_date'], reverse=True)
             
         return commits
     except Exception as e:
@@ -569,6 +568,6 @@ def _analyze_diff(diff_id, commit_1_id, commit_2_id, snapshot1, snapshot2, tech_
 def identify_tech_stack(file_path, stacks):
     extension = os.path.splitext(file_path)[1]
     for stack in stacks:
-        if any(file_path.startswith(path) for path in stack['paths']) or extension in stack['extensions']:
+        if any(file_path.startswith(path) for path in stack['paths']) and extension in stack['extensions']:
             return stack['name']
     return None
