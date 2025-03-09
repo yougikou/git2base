@@ -3,59 +3,110 @@ from tkinter import ttk, filedialog, messagebox
 import os
 import datetime
 import pygit2
-from git_operations import get_git_commits, get_git_commits_ui
+import json
+from git.commit import get_git_commits_ui
+
+class LanguageManager:
+    def __init__(self):
+        self.current_lang = "zh"
+        self.load_languages()
+        
+    def load_languages(self):
+        self.languages = {}
+        try:
+            with open("locales/en.json", "r", encoding="utf-8") as f:
+                self.languages["en"] = json.load(f)
+            with open("locales/ja.json", "r", encoding="utf-8") as f:
+                self.languages["ja"] = json.load(f)
+            with open("locales/zh.json", "r", encoding="utf-8") as f:
+                self.languages["zh"] = json.load(f)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load languages: {str(e)}")
+            
+    def get_text(self, key):
+        return self.languages[self.current_lang].get(key, key)
+        
+    def get_key_by_text(self, text):
+        """通过文本找到对应的 key"""
+        for key, value in self.languages[self.current_lang].items():
+            if value == text:
+                return key
+        return None  # 没有匹配项
+    
+    def set_language(self, lang):
+        if lang in self.languages:
+            self.current_lang = lang
+            return True
+        return False
 
 class GitTab(ttk.Frame):
     def __init__(self, master=None, **kwargs):
         super().__init__(master, **kwargs)
         self.repo = None
+        self.lang_manager = LanguageManager()
         self.create_widgets()
         
     def create_widgets(self):
         # 仓库选择
-        self.repo_frame = ttk.LabelFrame(self, text="仓库选择")
+        self.repo_frame = ttk.LabelFrame(self, text=self.lang_manager.get_text("repo_selection"))
         self.repo_frame.pack(fill=tk.X, padx=5, pady=5)
         
         self.repo_entry = ttk.Entry(self.repo_frame)
         self.repo_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
         
-        self.repo_btn = ttk.Button(self.repo_frame, text="选择", command=self.select_repo)
+        self.repo_btn = ttk.Button(self.repo_frame, text=self.lang_manager.get_text("select"), command=self.select_repo)
         self.repo_btn.pack(side=tk.RIGHT, padx=5)
         
+        # 语言切换
+        self.lang_frame = ttk.Frame(self)
+        self.lang_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        self.lang_var = tk.StringVar(value="zh")
+        self.lang_menu = ttk.OptionMenu(self.lang_frame, self.lang_var, "zh", *["zh", "en", "ja"], command=self.change_language)
+        self.lang_menu.pack(side=tk.RIGHT)
+        
         # 分支选择
-        self.branch_frame = ttk.LabelFrame(self, text="分支选择")
+        self.branch_frame = ttk.LabelFrame(self, text=self.lang_manager.get_text("branch_selection"))
         self.branch_frame.pack(fill=tk.X, padx=5, pady=5)
         
         self.branch_var = tk.StringVar()
         self.branch_combo = ttk.Combobox(self.branch_frame, textvariable=self.branch_var)
         self.branch_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
         
-        self.refresh_btn = ttk.Button(self.branch_frame, text="刷新分支", command=self.refresh_branches)
+        self.refresh_btn = ttk.Button(self.branch_frame, text=self.lang_manager.get_text("refresh_branches"), command=self.refresh_branches)
         self.refresh_btn.pack(side=tk.RIGHT, padx=5)
         
         # 提交密度和过滤选项
         self.filter_frame = ttk.Frame(self)
         self.filter_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        self.density_frame = ttk.LabelFrame(self.filter_frame, text="提交密度")
+        self.density_frame = ttk.LabelFrame(self.filter_frame, text=self.lang_manager.get_text("commit_density"))
         self.density_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
         
-        self.density_var = tk.StringVar(value="全部")
+        self.density_var = tk.StringVar(value=self.lang_manager.get_text("density_options.all"))
         self.density_combo = ttk.Combobox(self.density_frame, textvariable=self.density_var)
-        self.density_combo['values'] = ("全部", "1周", "2周", "1个月", "3个月", "6个月", "1年")
+        self.density_combo['values'] = (
+            self.lang_manager.get_text("density_options.all"),
+            self.lang_manager.get_text("density_options.1week"),
+            self.lang_manager.get_text("density_options.2weeks"),
+            self.lang_manager.get_text("density_options.1month"),
+            self.lang_manager.get_text("density_options.3months"),
+            self.lang_manager.get_text("density_options.6months"),
+            self.lang_manager.get_text("density_options.1year")
+        )
         self.density_combo.pack(fill=tk.X, padx=5, pady=5)
         
         self.filter_branch_var = tk.BooleanVar(value=True)
         self.filter_branch_check = ttk.Checkbutton(self.filter_frame, 
-                                                text="仅显示当前分支提交",
+                                                text=self.lang_manager.get_text("show_current_branch_only"),
                                                 variable=self.filter_branch_var)
         self.filter_branch_check.pack(side=tk.RIGHT, padx=5)
         
-        self.refresh_commits_btn = ttk.Button(self.filter_frame, text="刷新提交列表", command=self.refresh_commits)
+        self.refresh_commits_btn = ttk.Button(self.filter_frame, text=self.lang_manager.get_text("refresh_commits"), command=self.refresh_commits)
         self.refresh_commits_btn.pack(side=tk.RIGHT, padx=5)
         
         # 提交列表
-        self.commit_frame = ttk.LabelFrame(self, text="提交列表")
+        self.commit_frame = ttk.LabelFrame(self, text=self.lang_manager.get_text("commit_list"))
         self.commit_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
         columns = ("hash", "message", "author", "date", "branch")
@@ -72,13 +123,13 @@ class GitTab(ttk.Frame):
         self.input_frame.pack(fill=tk.X, padx=5, pady=5)
 
         # 提交1输入框
-        self.commit1_frame = ttk.LabelFrame(self.input_frame, text="提交1")
+        self.commit1_frame = ttk.LabelFrame(self.input_frame, text=self.lang_manager.get_text("commit1"))
         self.commit1_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         self.commit1_entry = ttk.Entry(self.commit1_frame)
         self.commit1_entry.pack(fill=tk.X, padx=5, pady=5)
 
         # 提交2输入框
-        self.commit2_frame = ttk.LabelFrame(self.input_frame, text="提交2")
+        self.commit2_frame = ttk.LabelFrame(self.input_frame, text=self.lang_manager.get_text("commit2"))
         self.commit2_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         self.commit2_entry = ttk.Entry(self.commit2_frame)
         self.commit2_entry.pack(fill=tk.X, padx=5, pady=5)
@@ -92,45 +143,83 @@ class GitTab(ttk.Frame):
         self.btn_frame = ttk.Frame(self)
         self.btn_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        self.get_all_btn = ttk.Button(self.btn_frame, text="获取分支所有提交", command=self.get_all_commits_cmd_preview)
+        self.get_all_btn = ttk.Button(self.btn_frame, text=self.lang_manager.get_text("get_all_commits"), command=self.get_all_commits_cmd_preview)
         self.get_all_btn.pack(side=tk.LEFT, padx=5)
         
-        self.get_after_btn = ttk.Button(self.btn_frame, text="获取指定提交后的所有提交", command=self.get_all_commit_after_cmd_preview)
+        self.get_after_btn = ttk.Button(self.btn_frame, text=self.lang_manager.get_text("get_commits_after"), command=self.get_all_commit_after_cmd_preview)
         self.get_after_btn.pack(side=tk.LEFT, padx=5)
         
-        self.compare_btn = ttk.Button(self.btn_frame, text="比较两个提交", command=self.get_compare_commits_cmd_preview)
+        self.compare_btn = ttk.Button(self.btn_frame, text=self.lang_manager.get_text("compare_commits"), command=self.get_compare_commits_cmd_preview)
         self.compare_btn.pack(side=tk.LEFT, padx=5)
         
-        self.analyze_btn = ttk.Button(self.btn_frame, text="比较并分析两个提交", command=self.get_compare_commits_analyze_cmd_preview)
+        self.analyze_btn = ttk.Button(self.btn_frame, text=self.lang_manager.get_text("compare_and_analyze"), command=self.get_compare_commits_analyze_cmd_preview)
         self.analyze_btn.pack(side=tk.LEFT, padx=5)
         
-        self.analyze_diff_btn = ttk.Button(self.btn_frame, text="分析两个提交", command=self.get_analyze_commits_diff_cmd_preview)
+        self.analyze_diff_btn = ttk.Button(self.btn_frame, text=self.lang_manager.get_text("analyze_commits_diff"), command=self.get_analyze_commits_diff_cmd_preview)
         self.analyze_diff_btn.pack(side=tk.LEFT, padx=5)
         
         # 命令行预览
-        self.cmd_frame = ttk.LabelFrame(self, text="命令行预览")
+        self.cmd_frame = ttk.LabelFrame(self, text=self.lang_manager.get_text("command_preview"))
         self.cmd_frame.pack(fill=tk.X, padx=5, pady=5)
         
         self.cmd_text = tk.Text(self.cmd_frame, height=2)
         self.cmd_text.pack(fill=tk.X, padx=5, pady=5)
 
-        self.exec_btn = ttk.Button(self.cmd_frame, text="执行", command=self.execute_command)
+        self.exec_btn = ttk.Button(self.cmd_frame, text=self.lang_manager.get_text("execute"), command=self.execute_command)
         self.exec_btn.pack(side=tk.RIGHT, padx=5)
 
         # 重置数据库按钮
-        self.reset_db_btn = ttk.Button(self.cmd_frame, text="重置数据库", command=self.reset_db_cmd)
+        self.reset_db_btn = ttk.Button(self.cmd_frame, text=self.lang_manager.get_text("reset_db"), command=self.reset_db_cmd)
         self.reset_db_btn.pack(side=tk.RIGHT, padx=5)        
 
         # 命令行输出窗口
-        self.output_frame = ttk.LabelFrame(self, text="命令行输出")
+        self.output_frame = ttk.LabelFrame(self, text=self.lang_manager.get_text("command_output"))
         self.output_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
         self.output_text = tk.Text(self.output_frame)
         self.output_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
+    def change_language(self, lang):
+        if self.lang_manager.set_language(lang):
+            self.update_ui_texts()
+            
+    def update_ui_texts(self):
+        # 更新所有UI文本
+        self.repo_frame.config(text=self.lang_manager.get_text("repo_selection"))
+        self.repo_btn.config(text=self.lang_manager.get_text("select"))
+        self.branch_frame.config(text=self.lang_manager.get_text("branch_selection"))
+        self.refresh_btn.config(text=self.lang_manager.get_text("refresh_branches"))
+        self.density_frame.config(text=self.lang_manager.get_text("commit_density"))
+        self.filter_branch_check.config(text=self.lang_manager.get_text("show_current_branch_only"))
+        self.refresh_commits_btn.config(text=self.lang_manager.get_text("refresh_commits"))
+        self.commit_frame.config(text=self.lang_manager.get_text("commit_list"))
+        self.commit1_frame.config(text=self.lang_manager.get_text("commit1"))
+        self.commit2_frame.config(text=self.lang_manager.get_text("commit2"))
+        self.get_all_btn.config(text=self.lang_manager.get_text("get_all_commits"))
+        self.get_after_btn.config(text=self.lang_manager.get_text("get_commits_after"))
+        self.compare_btn.config(text=self.lang_manager.get_text("compare_commits"))
+        self.analyze_btn.config(text=self.lang_manager.get_text("compare_and_analyze"))
+        self.analyze_diff_btn.config(text=self.lang_manager.get_text("analyze_commits_diff"))
+        self.cmd_frame.config(text=self.lang_manager.get_text("command_preview"))
+        self.exec_btn.config(text=self.lang_manager.get_text("execute"))
+        self.reset_db_btn.config(text=self.lang_manager.get_text("reset_db"))
+        self.output_frame.config(text=self.lang_manager.get_text("command_output"))
+
+        self.density_var = tk.StringVar(value=self.lang_manager.get_text("density_options.all"))
+        self.density_combo.config(textvariable=self.density_var)
+        self.density_combo['values'] = (
+            self.lang_manager.get_text("density_options.all"),
+            self.lang_manager.get_text("density_options.1week"),
+            self.lang_manager.get_text("density_options.2weeks"),
+            self.lang_manager.get_text("density_options.1month"),
+            self.lang_manager.get_text("density_options.3months"),
+            self.lang_manager.get_text("density_options.6months"),
+            self.lang_manager.get_text("density_options.1year")
+        )
+
     def select_repo(self):
         """选择git仓库目录"""
-        repo_path = filedialog.askdirectory(title="选择Git仓库目录")
+        repo_path = filedialog.askdirectory(title=self.lang_manager.get_text("select_repo_title"))
         if not repo_path:
             return
             
@@ -141,13 +230,13 @@ class GitTab(ttk.Frame):
             self.repo_entry.insert(0, repo_path)
             self.refresh_branches()  # 自动刷新分支列表
         except pygit2.GitError as e:
-            messagebox.showerror("错误", f"选择的目录不是有效的Git仓库:\n{str(e)}")
+            messagebox.showerror(self.lang_manager.get_text("error"), f"{self.lang_manager.get_text('invalid_repo')}:\n{str(e)}")
             self.repo = None
         
     def refresh_branches(self):
         """刷新分支列表"""
         if not self.repo:
-            messagebox.showwarning("警告", "请先选择有效的Git仓库")
+            messagebox.showwarning(self.lang_manager.get_text("warning"), self.lang_manager.get_text("select_valid_repo"))
             return
             
         try:
@@ -162,11 +251,11 @@ class GitTab(ttk.Frame):
             if branches:
                 self.branch_combo.current(0)
         except Exception as e:
-            messagebox.showerror("错误", f"刷新分支失败:\n{str(e)}")
+            messagebox.showerror(self.lang_manager.get_text("error"), f"{self.lang_manager.get_text('refresh_branches_failed')}:\n{str(e)}")
 
     def refresh_commits(self):
         if not self.repo:
-            messagebox.showwarning("警告", "请先选择有效的Git仓库")
+            messagebox.showwarning(self.lang_manager.get_text("warning"), self.lang_manager.get_text("select_valid_repo"))
             return
         
         try:
@@ -178,11 +267,11 @@ class GitTab(ttk.Frame):
                 branch_name = self.branch_var.get()
                 
                 # 获取当前分支的所有提交
-                commits = get_git_commits_ui(self.repo, branch_name, density, show_only_current=True)
+                commits = get_git_commits_ui(self.repo, branch_name, self.lang_manager.get_key_by_text(density), show_only_current=True)
             else:
                 # 获取所有提交，以当前分支为主体
                 branch_name = self.branch_var.get()
-                commits = get_git_commits_ui(self.repo, branch_name, density, show_only_current=False)
+                commits = get_git_commits_ui(self.repo, branch_name, self.lang_manager.get_key_by_text(density), show_only_current=False)
                 
             # 清空现有提交列表
             self.commit_tree.delete(*self.commit_tree.get_children())
@@ -203,12 +292,12 @@ class GitTab(ttk.Frame):
                     branch_name
                 ))
         except Exception as e:
-            messagebox.showerror("错误", f"获取提交失败:\n{str(e)}")
+            messagebox.showerror(self.lang_manager.get_text("error"), f"{self.lang_manager.get_text('get_commits_failed')}:\n{str(e)}")
         
     def get_all_commits_cmd_preview(self):
         """生成获取所有提交的命令行预览"""
         if not self.repo:
-            messagebox.showwarning("警告", "请先选择有效的Git仓库")
+            messagebox.showwarning(self.lang_manager.get_text("warning"), self.lang_manager.get_text("select_valid_repo"))
             return
             
         # 生成命令行预览
@@ -223,16 +312,16 @@ class GitTab(ttk.Frame):
     def get_all_commit_after_cmd_preview(self):
         """生成获取指定提交后所有提交的命令行预览"""
         if not self.repo:
-            messagebox.showwarning("警告", "请先选择有效的Git仓库")
+            messagebox.showwarning(self.lang_manager.get_text("warning"), self.lang_manager.get_text("select_valid_repo"))
             return
             
         if not self.branch_var.get():
-            messagebox.showwarning("警告", "请先选择分支")
+            messagebox.showwarning(self.lang_manager.get_text("warning"), self.lang_manager.get_text("select_branch"))
             return
             
         commit_hash = self.commit1_entry.get()
         if not commit_hash:
-            messagebox.showwarning("警告", "请在提交1输入框中输入提交哈希")
+            messagebox.showwarning(self.lang_manager.get_text("warning"), self.lang_manager.get_text("enter_commit_hash"))
             return
             
         # 生成命令行预览
@@ -245,13 +334,13 @@ class GitTab(ttk.Frame):
     def get_compare_commits_cmd_preview(self):
         """生成比较两个提交的命令行预览"""
         if not self.repo:
-            messagebox.showwarning("警告", "请先选择有效的Git仓库")
+            messagebox.showwarning(self.lang_manager.get_text("warning"), self.lang_manager.get_text("select_valid_repo"))
             return
             
         hash1 = self.commit1_entry.get()
         hash2 = self.commit2_entry.get()
         if not hash1 or not hash2:
-            messagebox.showwarning("警告", "请在提交1和提交2输入框中输入提交哈希")
+            messagebox.showwarning(self.lang_manager.get_text("warning"), self.lang_manager.get_text("enter_two_commit_hashes"))
             return
             
         # 生成命令行预览
@@ -264,13 +353,13 @@ class GitTab(ttk.Frame):
     def get_compare_commits_analyze_cmd_preview(self):
         """生成比较并分析两个提交的命令行预览"""
         if not self.repo:
-            messagebox.showwarning("警告", "请先选择有效的Git仓库")
+            messagebox.showwarning(self.lang_manager.get_text("warning"), self.lang_manager.get_text("select_valid_repo"))
             return
             
         hash1 = self.commit1_entry.get()
         hash2 = self.commit2_entry.get()
         if not hash1 or not hash2:
-            messagebox.showwarning("警告", "请在提交1和提交2输入框中输入提交哈希")
+            messagebox.showwarning(self.lang_manager.get_text("warning"), self.lang_manager.get_text("enter_two_commit_hashes"))
             return
             
         # 生成命令行预览
@@ -297,13 +386,13 @@ class GitTab(ttk.Frame):
     def get_analyze_commits_diff_cmd_preview(self):
         """生成分析两个提交差异的命令行预览"""
         if not self.repo:
-            messagebox.showwarning("警告", "请先选择有效的Git仓库")
+            messagebox.showwarning(self.lang_manager.get_text("warning"), self.lang_manager.get_text("select_valid_repo"))
             return
             
         hash1 = self.commit1_entry.get()
         hash2 = self.commit2_entry.get()
         if not hash1 or not hash2:
-            messagebox.showwarning("警告", "请在提交1和提交2输入框中输入提交哈希")
+            messagebox.showwarning(self.lang_manager.get_text("warning"), self.lang_manager.get_text("enter_two_commit_hashes"))
             return
             
         # 生成命令行预览
@@ -312,7 +401,7 @@ class GitTab(ttk.Frame):
         self.cmd_text.insert(tk.END, cmd)
         
         # 显示提示框
-        messagebox.showinfo("提示", f"请确保提交1 {hash1}, 提交2 {hash2} 的比较结果已经保存在数据库中。该操作仅仅执行分析处理。")
+        messagebox.showinfo(self.lang_manager.get_text("info"), f"请确保提交1 {hash1}, 提交2 {hash2} {self.lang_manager.get_text('compare_result_saved')}")
 
     def reset_db_cmd(self):
         # 生成命令行预览
@@ -321,20 +410,20 @@ class GitTab(ttk.Frame):
         self.cmd_text.insert(tk.END, cmd)
         
         # 显示确认对话框
-        confirm = messagebox.askyesno("确认", "确定要重置数据库吗？此操作将删除所有分析数据！")
+        confirm = messagebox.askyesno(self.lang_manager.get_text("confirm"), self.lang_manager.get_text("confirm_reset_db"))
         if confirm:
             self.execute_command()
 
     def execute_command(self):
         """执行命令行预览中的命令"""
         if not self.repo:
-            messagebox.showwarning("警告", "请先选择有效的Git仓库")
+            messagebox.showwarning(self.lang_manager.get_text("warning"), self.lang_manager.get_text("select_valid_repo"))
             return
             
         # 获取命令行内容
         cmd = self.cmd_text.get(1.0, tk.END).strip()
         if not cmd:
-            messagebox.showwarning("警告", "没有可执行的命令")
+            messagebox.showwarning(self.lang_manager.get_text("warning"), self.lang_manager.get_text("no_command"))
             return
             
         try:
@@ -360,7 +449,7 @@ class GitTab(ttk.Frame):
             self.output_text.insert(tk.END, output)
             
         except Exception as e:
-            messagebox.showerror("错误", f"命令执行失败:\n{str(e)}")
+            messagebox.showerror(self.lang_manager.get_text("error"), f"{self.lang_manager.get_text('command_failed')}:\n{str(e)}")
 
 def main():
     root = tk.Tk()

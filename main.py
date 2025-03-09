@@ -1,6 +1,8 @@
 import argparse
-from git_operations import get_git_commits, get_git_diff, analyze_existing_diffs
-from db_operations import reset_database, get_latest_commit_hash_from_db, insert_diff_files
+from git.commit import get_git_commits
+from git.diff import get_git_diff
+from git.analyzer import analyze_existing_diffs
+from db.operations import reset_database, get_latest_commit_hash_from_db
 from pygit2 import Repository
 from utils import parse_short_hash
 from gui import main as gui_main
@@ -23,7 +25,7 @@ def main():
         return
 
     # 初始化数据库连接
-    from db_operations import initialize_db
+    from db.connection import initialize_db
     initialize_db()
     
     # 如果是重置数据库，不需要repo路径
