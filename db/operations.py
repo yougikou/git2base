@@ -52,7 +52,7 @@ def reset_database():
         Base.metadata.create_all(engine)
         
         # 动态创建并注册analyzer结果表模型
-        from ..config import load_analyzer_config
+        from ..git.config import load_analyzer_config
         for analyzer in load_analyzer_config():
             analyzer_name = analyzer['name'].lower()
             model = create_analyzer_result_model(analyzer_name)
