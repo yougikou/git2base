@@ -1,20 +1,24 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, scoped_session
+from __future__ import annotations
+
 from contextlib import contextmanager
-import yaml
+from typing import Any, Generator
+
+from sqlalchemy import create_engine  # type: ignore
+from sqlalchemy.orm import scoped_session, sessionmaker  # type: ignore
+import yaml  # type: ignore
 import os
 
 # SQLAlchemy setup
-engine = None
-Session = None
+engine: Any = None
+Session: Any = None
 
-def load_db_config():
+def load_db_config() -> dict:
     with open('config.yaml', 'r', encoding='utf-8') as file:
         config = yaml.safe_load(file)
     return config['database']
 
-@contextmanager 
-def get_db_connection():
+@contextmanager
+def get_db_connection() -> Generator[Any, None, None]:
     """Provide a transactional scope around a series of operations."""
     session = Session()
     try:
@@ -26,7 +30,7 @@ def get_db_connection():
     finally:
         session.close()
 
-def initialize_db():
+def initialize_db() -> None:
     """Initialize SQLAlchemy database connection"""
     global engine, Session
     
@@ -52,7 +56,7 @@ def initialize_db():
     
     print(f"Database connected: {db_url}")
 
-def close_db():
+def close_db() -> None:
     """Close database connection"""
     global engine, Session
     if engine:
