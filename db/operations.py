@@ -1,11 +1,15 @@
+from __future__ import annotations
+
+from typing import Any, Dict, Iterable, List
+
 from .models import Base, GitCommit, GitFile, GitDiffFile, AnalyzerResultBase
 from .connection import Session, engine
-from sqlalchemy import inspect, text
-from sqlalchemy.orm import aliased
+from sqlalchemy import inspect, text  # type: ignore
+from sqlalchemy.orm import aliased  # type: ignore
 import json
 
 # 缓存已创建的模型类
-_analyzer_model_cache = {}
+_analyzer_model_cache: Dict[str, type] = {}
 
 def create_analyzer_result_model(analyzer_name: str) -> type:
     """Dynamically create analyzer result model class with caching"""
@@ -25,7 +29,7 @@ def create_analyzer_result_model(analyzer_name: str) -> type:
     _analyzer_model_cache[analyzer_name] = model
     return model
 
-def reset_database():
+def reset_database() -> None:
     """Reset database by dropping and recreating all tables"""
     inspector = inspect(engine)
     all_tables = inspector.get_table_names()
@@ -52,7 +56,7 @@ def reset_database():
         Base.metadata.create_all(engine)
         
         # 动态创建并注册analyzer结果表模型
-        from ..config import load_analyzer_config
+        from git.config import load_analyzer_config
         for analyzer in load_analyzer_config():
             analyzer_name = analyzer['name'].lower()
             model = create_analyzer_result_model(analyzer_name)
@@ -61,7 +65,7 @@ def reset_database():
     except Exception as e:
         print(f"An error occurred: {e}")
 
-def get_commit_id(commit_hash):
+def get_commit_id(commit_hash: str) -> int | None:
     session = Session()
     try:
         result = session.query(GitCommit.id)\
@@ -71,7 +75,7 @@ def get_commit_id(commit_hash):
     finally:
         session.close()
 
-def insert_commit(commit_data):
+def insert_commit(commit_data: Dict[str, Any]) -> int:
     session = Session()
     try:
         from datetime import datetime
@@ -92,7 +96,7 @@ def insert_commit(commit_data):
     finally:
         session.close()
 
-def insert_diff_file(diff_file_data):
+def insert_diff_file(diff_file_data: Dict[str, Any]) -> int:
     session = Session()
     try:
         diff_file = GitDiffFile(
@@ -120,7 +124,7 @@ def insert_diff_file(diff_file_data):
     finally:
         session.close()
 
-def insert_diff_files(diff_files_data):
+def insert_diff_files(diff_files_data: Iterable[Dict[str, Any]]) -> int:
     session = Session()
     try:
         diff_files = [
@@ -151,7 +155,7 @@ def insert_diff_files(diff_files_data):
     finally:
         session.close()
 
-def remove_diff_file_snapshot(diff_id):
+def remove_diff_file_snapshot(diff_id: int) -> None:
     session = Session()
     try:
         diff_file = session.query(GitDiffFile)\
@@ -167,7 +171,7 @@ def remove_diff_file_snapshot(diff_id):
     finally:
         session.close()
 
-def insert_commit_and_files(commit_data, file_data_list):
+def insert_commit_and_files(commit_data: Dict[str, Any], file_data_list: Iterable[Dict[str, Any]]) -> int:
     session = Session()
     try:
         from datetime import datetime
@@ -203,7 +207,7 @@ def insert_commit_and_files(commit_data, file_data_list):
     finally:
         session.close()
 
-def get_latest_commit_hash_from_db(branch):
+def get_latest_commit_hash_from_db(branch: str) -> str | None:
     session = Session()
     try:
         result = session.query(GitCommit.commit_hash)\
@@ -216,7 +220,7 @@ def get_latest_commit_hash_from_db(branch):
     finally:
         session.close()
 
-def commit_exists_in_db(commit_hash):
+def commit_exists_in_db(commit_hash: str) -> bool:
     session = Session()
     try:
         result = session.query(GitCommit)\
@@ -228,7 +232,7 @@ def commit_exists_in_db(commit_hash):
     finally:
         session.close()
 
-def get_diff_data(commit_hash1, commit_hash2):
+def get_diff_data(commit_hash1: str, commit_hash2: str) -> List[GitDiffFile]:
     session = Session()
     try:
         commit1 = aliased(GitCommit)
@@ -246,7 +250,16 @@ def get_diff_data(commit_hash1, commit_hash2):
     finally:
         session.close()
 
-def save_analysis_result(analyzer_name: str, diff_id: int, commit_1_id: int, commit_2_id: int, count1: int, result1: dict, count2: int, result2: dict) -> bool:
+def save_analysis_result(
+    analyzer_name: str,
+    diff_id: int,
+    commit_1_id: int,
+    commit_2_id: int,
+    count1: int,
+    result1: Dict[str, Any],
+    count2: int,
+    result2: Dict[str, Any],
+) -> bool:
     if not isinstance(analyzer_name, str) or not analyzer_name.replace('_', '').isalnum():
         raise ValueError(f"Invalid analyzer name: {analyzer_name}")
         

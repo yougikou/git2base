@@ -1,6 +1,8 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.sql import func
+from __future__ import annotations
+
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, JSON, String, Text  # type: ignore
+from sqlalchemy.ext.declarative import declarative_base  # type: ignore
+from sqlalchemy.sql import func  # type: ignore
 
 Base = declarative_base()
 
