@@ -5,13 +5,15 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Python 调试程序: 包含参数的当前文件",
+      "name": "Git2Base Debug - repo",
       "type": "debugpy",
       "request": "launch",
       "program": "main.py",
       "console": "integratedTerminal",
       "args": [
-        "${command:pickArgs}"
+        "--repo", "/Users/yougikou/Documents/Github/MCSManager",
+        "--branch", "master",
+        "--diff", "58e06b52213047c7bfdea305004299e83cd79b6d", "ac3c30939ab454a3098835465941f853652ad52f"
       ]
     }
   ]

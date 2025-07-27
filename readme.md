@@ -23,11 +23,6 @@ database:
   password: password
 ```
 
-3. 初始化数据库模式：
-```bash
-python main.py --reset
-```
-
 ## 数据库模式
 
 ```sql
@@ -51,31 +46,22 @@ git_diff_files:
 python main.py --reset-db
 ```
 
-- 从起始/最新提交提取分支提交历史（如果省略--branch则使用当前检出分支）：
+- 从最新提交提取分支文件进行分析（如果省略--branch则使用当前检出分支，如果省略提交哈希则使用当前分支最新提交）：
 ```bash
 python main.py --repo /path/to/repo
 python main.py --repo /path/to/repo --branch <branch-name>
-```
-
-- 从特定提交提取分支提交历史（如果省略--branch则使用当前检出分支，指定哈希如果不存在当前分支则会报错）：
-```bash
-python main.py --repo /path/to/repo --commit_hash <hash>
 python main.py --repo /path/to/repo --branch <branch-name> --commit_hash <hash>
 ```
 
-- 提取两个提交之间的差异（哈希值可以唯一代表特定分支的特定提交，故省略分支指定）：
+- 提取两个提交之间的差异文件进行分析（不指定分支的时候使用当前检出的分支）：
 ```bash
 python main.py --repo /path/to/repo --diff <hash1> <hash2>
+python main.py --repo /path/to/repo --branch <branch-name> --diff <hash1> <hash2>
 ```
 
-- 提取两个提交之间的差异，并执行分析器进行分析：
+- 提取两个分支之间的差异文件进行分析（自动使用各个分支的最新提交）：
 ```bash
-python main.py --repo /path/to/repo --diff <hash1> <hash2> --analyze
-```
-
-- 已经执行--diff获取差异数据的情况下，单独执行--analyze：
-```bash
-python main.py --analyze <hash1> <hash2>
+python main.py --repo /path/to/repo --diff-branch <branch1> <branch2>
 ```
 
 ## 分析器

@@ -19,14 +19,14 @@ class RegexMatchCountAnalyzer(BaseAnalyzer):
     def get_description(self) -> str:
         return "分析文件中符合正规表达式的匹配数"
 
-    def analyze(self, content: str) -> tuple[int, dict]:
+    def analyze(self, file_content: str) -> tuple[int, dict | None]:
         results = {}
         
         # 遍历patterns，对每个pattern进行匹配
         # 把匹配到的字符串储存到results中
         # 把匹配到的次数储存到count中
         for pattern in self.patterns:
-            matches = re.findall(pattern, content)
+            matches = re.findall(pattern, file_content)
             results[pattern] = {
                 'count': len(matches),
                 'matches': matches

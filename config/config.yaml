@@ -30,12 +30,33 @@ stacks:
   #   extensions: [".rs", ".toml"]
   - name: Java
     paths: []
-    extensions: [".java"]
+    extensions: ["java"]
+  - name: Script
+    paths: []
+    extensions: ["sh", "bat"]
+  - name: Github
+    paths: [.github]
+    extensions: []
+  - name: VueScript
+    paths: [frontend/src]
+    extensions: ["vue"]
+  - name: TypeScript
+    paths: [common/src, daemon/src, frontend/src, panel/src]
+    extensions: ["ts"]
+  - name: CSS
+    paths: [common/src, daemon/src, frontend/src, panel/src]
+    extensions: ["css", "scss"]
   - name: XML
     paths: []
-    extensions: [".xml"]
+    extensions: ["xml"]
 
 analyzers:
+  - name: FileLineCount
+    class: "FileLineCountAnalyzer"
+    tech_stacks: ["All"]
+  - name: FileCharCount
+    class: "FileCharCountAnalyzer"
+    tech_stacks: ["All"]
   - name: XMLElementCount
     class: "XMLElementCountAnalyzer"
     tech_stacks: ["XML"]
