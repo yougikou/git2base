@@ -7,7 +7,8 @@ from sqlalchemy.exc import IntegrityError
 from tqdm import tqdm
 from typing import cast
 
-from database.connection import init_db
+from config.config import load_output_config
+from database.connection import init_output
 from database.model import create_tables, reset_tables
 from database.operation import (
     insert_analysis_results,
@@ -16,8 +17,11 @@ from database.operation import (
     insert_diff_results,
     insert_file_snapshot,
 )
-from git.utils import parse_short_hash
+from git.utils import parse_short_hash, write_csv
 from git.wrapper import SnapshotAnalysisWrapper, DiffAnalysisWrapper
+
+
+output_config = load_output_config()
 
 
 def commit_exec(
@@ -57,15 +61,26 @@ def commit_exec(
     commit_data = snapshot_wrapped.get_db_commit()
     commit_files_data = snapshot_wrapped.get_db_commit_files()
 
-    try:
-        if not commit_data.is_exists():
-            insert_commits([commit_data])
-
-        commit_files_data = insert_commit_files(commit_files_data)
-    except IntegrityError as e:
-        print(f"CommitFile UNIQUE constraint failed. Result already exist: {e}")
-        print(f"Process exit.")
-        sys.exit(1)
+    if output_config["type"] == "csv":
+        write_csv(
+            [commit_data.to_dict()],
+            f"{output_config["csv"]["path"]}/commits.csv",
+            False,
+        )
+        write_csv(
+            [f.to_dict() for f in commit_files_data],
+            f"{output_config["csv"]["path"]}/commit_files.csv",
+            False,
+        )
+    else:
+        try:
+            if not commit_data.is_exists():
+                insert_commits([commit_data])
+            commit_files_data = insert_commit_files(commit_files_data)
+        except IntegrityError as e:
+            print(f"CommitFile UNIQUE constraint failed. Result already exist: {e}")
+            print(f"Process exit.")
+            sys.exit(1)
 
     with tqdm(
         total=len(commit_files_data),
@@ -74,13 +89,29 @@ def commit_exec(
         bar_format="{desc}: {n_fmt}/{total_fmt} files",
     ) as pbar:
         processed_count = 0
+        append_mode = False
         for file in commit_files_data:
             # TODO decide if keep snapshot as analysis evidence -- maybe for debug purpose
             file_snapshot, analysis_results_data = snapshot_wrapped.exec_analysis(file)
-            insert_analysis_results(analysis_results_data)
 
-            if save_snapshot:
-                insert_file_snapshot([file_snapshot])
+            if output_config["type"] == "csv":
+                rows = [f.to_dict() for f in analysis_results_data]
+                write_csv(
+                    rows,
+                    f"{output_config["csv"]["path"]}/analysis_results.csv",
+                    append_mode,
+                )
+                if rows:
+                    append_mode = True
+            else:
+                try:
+                    insert_analysis_results(analysis_results_data)
+
+                    if save_snapshot:
+                        insert_file_snapshot([file_snapshot])
+                except Exception as e:
+                    print(f"Process exit.")
+                    sys.exit(1)
 
             # 更新进度条
             processed_count += 1
@@ -99,10 +130,10 @@ def diff_branch_exec(
     base_ref = repo.lookup_reference(f"refs/heads/{base_branch}")
     target_ref = repo.lookup_reference(f"refs/heads/{target_branch}")
     if not base_ref:
-        raise ValueError("分支不存在: {base_branch}")
+        raise ValueError(f"分支不存在: {base_branch}")
 
     if not target_ref:
-        raise ValueError("分支不存在: {target_branch}")
+        raise ValueError(f"分支不存在: {target_branch}")
 
     base_commit = cast(pygit2.Commit, repo.get(base_ref.target))
     target_commit = cast(pygit2.Commit, repo.get(target_ref.target))
@@ -143,17 +174,30 @@ def diff_branch_commit_exec(
     diff_wrapped = DiffAnalysisWrapper(
         repo, base_branch, target_branch, base_commit, target_commit
     )
+    commits_data = diff_wrapped.get_db_commits()
     diff_results_data = diff_wrapped.get_db_diff_results()
-    try:
-        for commit_data in diff_wrapped.get_db_commits():
-            if not commit_data.is_exists():
-                insert_commits([commit_data])
+    if output_config["type"] == "csv":
+        write_csv(
+            [f.to_dict() for f in commits_data],
+            f"{output_config["csv"]["path"]}/commits.csv",
+            False,
+        )
+        write_csv(
+            [f.to_dict() for f in diff_results_data],
+            f"{output_config["csv"]["path"]}/diff_results.csv",
+            False,
+        )
+    else:
+        try:
+            for commit_data in commits_data:
+                if not commit_data.is_exists():
+                    insert_commits([commit_data])
 
-        diff_results_data = insert_diff_results(diff_results_data)
-    except IntegrityError as e:
-        print(f"DiffResult UNIQUE constraint failed. Result already exist: {e}")
-        print(f"Process exit.")
-        sys.exit(1)
+            diff_results_data = insert_diff_results(diff_results_data)
+        except IntegrityError as e:
+            print(f"DiffResult UNIQUE constraint failed. Result already exist: {e}")
+            print(f"Process exit.")
+            sys.exit(1)
 
     with tqdm(
         total=len(diff_results_data),
@@ -162,15 +206,31 @@ def diff_branch_commit_exec(
         bar_format="{desc}: {n_fmt}/{total_fmt} files",
     ) as pbar:
         processed_count = 0
+        append_mode = False
         for diff_result_data in diff_results_data:
             # TODO decide if keep snapshot as analysis evidence -- maybe for debug purpose
             file_snapshots, analysis_results_data = diff_wrapped.exec_analysis(
                 diff_result_data
             )
-            insert_analysis_results(analysis_results_data)
 
-            if save_snapshot:
-                insert_file_snapshot(file_snapshots)
+            if output_config["type"] == "csv":
+                rows = [f.to_dict() for f in analysis_results_data]
+                write_csv(
+                    rows,
+                    f"{output_config["csv"]["path"]}/analysis_results.csv",
+                    append_mode,
+                )
+                if rows:
+                    append_mode = True
+            else:
+                try:
+                    insert_analysis_results(analysis_results_data)
+
+                    if save_snapshot:
+                        insert_file_snapshot(file_snapshots)
+                except Exception as e:
+                    print(f"Process exit.")
+                    sys.exit(1)
 
             # 更新进度条
             processed_count += 1
@@ -250,9 +310,12 @@ def main():
     args = parser.parse_args()
 
     if args.reset_db:
-        engine = init_db()
-        reset_tables(engine)
-        print("数据库已重置")
+        engine = init_output()
+        if engine:
+            reset_tables(engine)
+            print("数据库已重置")
+        else:
+            print("输出模式为CSV，忽略数据库操作")
         return
 
     if not args.repo:
@@ -260,8 +323,9 @@ def main():
         return
 
     validate_args(args)
-    engine = init_db()
-    create_tables(engine)
+    engine = init_output()
+    if engine:
+        create_tables(engine)
     repo = Repository(args.repo)
 
     mode, branch, base, target = resolve_branch_and_commits(args, repo)

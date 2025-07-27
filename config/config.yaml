@@ -1,5 +1,7 @@
-database:
-  type: "sqlite"  # 支持postgresql或sqlite
+output:
+  type: "csv"  # 支持postgresql或sqlite或者csv
+  csv:
+    path: "/Users/yougikou/Documents/Github/git2base/csv_output"
   postgresql:
     host: "localhost"
     port: 5432

@@ -53,7 +53,6 @@ def _load_analyzers(analyzers):
 analyzers = load_analyzer_config()
 loadedAnalyzers = _load_analyzers(analyzers) if analyzers else {}
 
-
 def apply_analysis(
     repo: Repository,
     commit_hash: str | None,
@@ -189,41 +188,13 @@ class SnapshotAnalysisWrapper:
             files.append(
                 CommitFile(
                     commit_hash=str(self.commit.id),
-                    path=file_path,
+                    path=related_path,
                     tech_stack=tech_stack,
                     hash=str(file_oid),
                 )
             )
 
         return files
-
-    def get_commit_csv_row(self) -> dict[str, str]:
-        return {
-            "repository": self.repo.path,
-            "commit_hash": str(self.commit.id),
-            "branch": self.branch,
-            "message": self.commit.message,
-            "author_name": self.commit.author.name,
-            "author_email": self.commit.author.email,
-            "author_date": str(datetime.fromtimestamp(self.commit.author.time)),
-            "committer_name": self.commit.committer.name,
-            "committer_email": self.commit.committer.email,
-            "commit_date": str(datetime.fromtimestamp(self.commit.commit_time)),
-        }
-
-    def get_commit_file_csv_rows(self) -> list[dict[str, str]]:
-        rows = []
-        for commit_file in self.get_db_commit_files():
-            row = {
-                "commit_hash": str(self.commit.id),
-                "file_hash": commit_file.hash,
-                "file_path": commit_file.path,
-                "extension": commit_file.extension,
-                "tech_stack": commit_file.tech_stack,
-                "blob_hash": commit_file.blob_hash,
-            }
-            rows.append(row)
-        return rows
 
     def exec_analysis(
         self, file: CommitFile

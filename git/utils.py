@@ -1,6 +1,9 @@
-from typing import cast
+import csv
+import io
+import os
 import pygit2
 from pygit2.repository import Repository
+from typing import cast
 
 from config.config import load_stacks_config
 
@@ -69,3 +72,37 @@ def get_git_file_snapshot(hash: str, repo: Repository) -> str:
         return snapshot
     except UnicodeDecodeError:
         return "<utf-8-decode-error>"
+
+
+def write_csv(rows: list[dict[str, str]], filename: str, append_mode=False):
+    if not rows:
+        print(f"No data to write to {filename}")
+        return
+
+    file_exists = os.path.exists(filename)
+
+    if append_mode and file_exists:
+        with open(filename, mode="r", encoding="utf-8") as f:
+            existing_lines = f.readlines()
+            if len(existing_lines) > 1:
+                existing_header = next(csv.reader(io.StringIO(existing_lines[0]), quoting=csv.QUOTE_ALL))
+                new_header = list(rows[0].keys())
+                if existing_header != new_header:
+                    raise ValueError(
+                        "CSV header does not match existing file structure."
+                    )
+            write_header = len(existing_lines) <= 1
+
+        with open(filename, mode="a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=rows[0].keys(), quoting=csv.QUOTE_ALL)
+            if write_header:
+                writer.writeheader()
+            writer.writerows(rows)
+    else:
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        with open(filename, mode="w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=rows[0].keys(), quoting=csv.QUOTE_ALL)
+            writer.writeheader()
+            writer.writerows(rows)
+
+    print(f"CSV {'appended to' if append_mode else 'written to'} {filename}")

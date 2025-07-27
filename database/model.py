@@ -88,6 +88,15 @@ class AnalysisResult(Base):
     count = Column(Integer)
     content = Column(JSON)
 
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "commit_hash": str(self.commit_hash) if self.commit_hash is not None else "",
+            "path": str(self.path) if self.path is not None else "",
+            "analyzer_type": str(self.analyzer_type) if self.analyzer_type is not None else "",
+            "count": str(self.count) if self.count is not None else "",
+            "content": str(self.content) if self.content is not None else "",
+        }
+
 
 class Commit(Base):
     __tablename__ = "git_commit"
@@ -112,6 +121,20 @@ class Commit(Base):
         except Exception as e:
             print(f"检查提交是否存在失败: {str(e)}")
             raise
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "repository": str(self.repository) if self.repository is not None else "",
+            "branch": str(self.branch) if self.branch is not None else "",
+            "hash": str(self.hash) if self.hash is not None else "",
+            "message": str(self.message) if self.message is not None else "",
+            "author_name": str(self.author_name) if self.author_name is not None else "",
+            "author_email": str(self.author_email) if self.author_email is not None else "",
+            "author_date": self.author_date.isoformat() if self.author_date is not None else "",
+            "committer_name": str(self.committer_name) if self.committer_name is not None else "",
+            "committer_email": str(self.committer_email) if self.committer_email is not None else "",
+            "commit_date": self.commit_date.isoformat() if self.commit_date is not None else "",
+        }
 
 
 class CommitFile(Base):
@@ -153,6 +176,14 @@ class CommitFile(Base):
 
         return "<invalid>"
 
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "commit_hash": str(self.commit_hash) if self.commit_hash is not None else "",
+            "path": str(self.path) if self.path is not None else "",
+            "tech_stack": str(self.tech_stack) if self.tech_stack is not None else "",
+            "hash": str(self.hash) if self.hash is not None else "",
+        }
+
 
 class DiffResult(Base):
     __tablename__ = "git_diff_result"
@@ -189,3 +220,18 @@ class DiffResult(Base):
             return get_git_file_snapshot(str(self.target_file_hash), repo)
 
         return "<invalid>"
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "base_commit_hash": str(self.base_commit_hash) if self.base_commit_hash is not None else "",
+            "target_commit_hash": str(self.target_commit_hash) if self.target_commit_hash is not None else "",
+            "base_path": str(self.base_path) if self.base_path is not None else "",
+            "target_path": str(self.target_path) if self.target_path is not None else "",
+            "diff_change_type": str(self.diff_change_type) if self.diff_change_type is not None else "",
+            "base_tech_stack": str(self.base_tech_stack) if self.base_tech_stack is not None else "",
+            "target_tech_stack": str(self.target_tech_stack) if self.target_tech_stack is not None else "",
+            "base_file_hash": str(self.base_file_hash) if self.base_file_hash is not None else "",
+            "target_file_hash": str(self.target_file_hash) if self.target_file_hash is not None else "",
+            "hunk_char_count": str(self.hunk_char_count) if self.hunk_char_count is not None else "",
+            "hunk_line_count": str(self.hunk_line_count) if self.hunk_line_count is not None else "",
+        }

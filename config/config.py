@@ -40,8 +40,8 @@ def _load_config():
         if not isinstance(config, dict):
             raise ValueError("Config must be a dictionary")
 
-        if "database" not in config:
-            raise ValueError("Missing required config section: database")
+        if "output" not in config:
+            raise ValueError("Missing required config section: output")
 
         if "stacks" not in config:
             print(
@@ -57,9 +57,9 @@ def _load_config():
         return _config_cache
 
 
-def load_db_config():
+def load_output_config():
     config = _load_config()
-    return config["database"]
+    return config["output"]
 
 
 def load_stacks_config():

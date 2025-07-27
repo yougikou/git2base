@@ -3,34 +3,37 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 from contextlib import contextmanager
 import os
 
-from config.config import load_db_config
+from config.config import load_output_config
 
 # SQLAlchemy setup
 engine = None
 Session = None
 
 
-def init_db() -> Engine:
+def init_output() -> Engine | None:
     """Initialize SQLAlchemy database connection"""
     global engine, Session
 
-    config = load_db_config()
+    config = load_output_config()
 
-    if config["type"] == "postgresql":
+    db_url = ""
+    if config["type"] == "csv":
+        os.makedirs(os.path.dirname(config["csv"]["path"]), exist_ok=True)
+        return None
+    elif config["type"] == "postgresql":
         db_url = f"postgresql+psycopg2://{config['postgresql']['user']}:{config['postgresql']['password']}@{config['postgresql']['host']}:{config['postgresql']['port']}/{config['postgresql']['database']}"
-    else:  # SQLite
+        engine = create_engine(db_url, pool_size=20, max_overflow=0)
+    elif config["type"] == "sqlite":
         db_url = f"sqlite:///{config['sqlite']['database']}"
         os.makedirs(os.path.dirname(config["sqlite"]["database"]), exist_ok=True)
-
-    if config["type"] == "postgresql":
-        engine = create_engine(db_url, pool_size=20, max_overflow=0)
-    else:
         engine = create_engine(
             db_url,
             pool_size=20,
             max_overflow=0,
             connect_args={"check_same_thread": False},
         )
+    else:
+        print(f"Unsupport output setting: {config["type"]}")
 
     Session = scoped_session(sessionmaker(bind=engine))
 
