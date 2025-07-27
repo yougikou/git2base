@@ -13,7 +13,8 @@
       "args": [
         "--repo", "/Users/yougikou/Documents/Github/MCSManager",
         "--branch", "master",
-        "--diff", "58e06b52213047c7bfdea305004299e83cd79b6d", "ac3c30939ab454a3098835465941f853652ad52f"
+        "--diff", "58e06b52213047c7bfdea305004299e83cd79b6d", "ac3c30939ab454a3098835465941f853652ad52f",
+        // "--diff-branch", "master", "dev"
       ]
     }
   ]

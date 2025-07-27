@@ -1,8 +1,10 @@
 # Git2Base
 
+[English Version](doc/README_EN.md)
+
 Git2Base 是一个将Git仓库数据提取并分析到PostgreSQL数据库的Python工具。它提供以下功能：
 
-- 将Git提交历史和文件变更导入结构化数据库模式
+- 将Git提交历史和文件变更导入结构化数据库模式或者CSV以供数据分析挖掘
 - 提交之间的差异分析
 - 可扩展的仓库数据处理框架
 
@@ -13,29 +15,48 @@ Git2Base 是一个将Git仓库数据提取并分析到PostgreSQL数据库的Pyth
 pip install -r requirements.txt
 ```
 
-2. 在config.yaml中配置数据库连接：
+2. 在config.yaml中配置CSV输出或者数据库连接：
 ```yaml
-database:
-  host: localhost
-  port: 5432
-  dbname: git2base
-  user: postgres
-  password: password
+output:
+  type: "csv"  # 支持postgresql或sqlite或者csv
+  csv:
+    path: "<full path>"
+  postgresql:
+    host: "localhost"
+    port: 5432
+    database: "gitbase"
+    user: "gituser"
+    password: "giko"
+  sqlite:
+    database: "<full path>/gitbase.db"  # SQLite数据库文件路径
 ```
 
-## 数据库模式
+## 使用的数据结构
 
-```sql
-git_commits:
-  id, commit_hash, branch, commit_date, commit_message, author_name, author_email
+以下是Git2Base使用的数据结构，以及：
+- Diff: 分析两个提交/分支的差异时候主要使用DiffResult
+  - 2个Commit
+  - 多个DiffResult
+  - 每个DiffResult有新旧两组AnalysisResult
 
-git_files:
-  id, file_path, file_type, change_type, char_length, line_count, blob_hash
+- Snapshot: 分析某个提交的快照的时候主要使用CommitFile
+  - 1个Commit
+  - 多个CommitFile
+  - 每个CommitFile有一组AnalysisResult
 
-git_diff_files:
-  commit_hash1_id, commit_hash2_id, file_path, file_type, change_type,
-  line_count1, blob_hash1, content_snapshot1, line_count2, blob_hash2, content_snapshot2
-```
+- History: （TODO）用于收集所有提交以及每个提交（和父提交）的文件差异（Hunk）
+  - 多个Commit
+  - 多个DiffResult（包含Hunk的字符串/行数变更，无需针对文件的静态分析）
+
+<img src="doc/assets/gitbase-er.svg" alt="架构图" width="600">
+
+### 表说明
+
+- `git_commit`: 存储Git提交的基本信息，包括提交哈希、作者、提交者、时间等。
+- `git_commit_file`: 存储每个提交中包含的文件信息，包括文件路径、技术栈分类等。
+- `git_diff_result`: 存储两个提交之间文件差异的信息，包括变更类型、文件哈希等。
+- `git_analysis_result`: 存储分析器对文件的分析结果，包括匹配次数和详细内容。
+- `git_file_snapshot`: 存储文件内容的快照，用于分析和比较。
 
 ## 使用说明
 
@@ -46,22 +67,58 @@ git_diff_files:
 python main.py --reset-db
 ```
 
-- 从最新提交提取分支文件进行分析（如果省略--branch则使用当前检出分支，如果省略提交哈希则使用当前分支最新提交）：
+- 从指定提交提取完整文件结构快照进行分析（如果省略--branch则使用当前检出分支，如果省略提交哈希则使用当前分支最新提交）：
 ```bash
+# 使用当前检出的分支和最新提交
 python main.py --repo /path/to/repo
-python main.py --repo /path/to/repo --branch <branch-name>
-python main.py --repo /path/to/repo --branch <branch-name> --commit_hash <hash>
+
+# 指定分支和最新提交
+python main.py --repo /path/to/repo --branch main
+
+# 指定分支和特定提交
+python main.py --repo /path/to/repo --branch main --commit_hash a1b2c3d
 ```
 
 - 提取两个提交之间的差异文件进行分析（不指定分支的时候使用当前检出的分支）：
 ```bash
-python main.py --repo /path/to/repo --diff <hash1> <hash2>
-python main.py --repo /path/to/repo --branch <branch-name> --diff <hash1> <hash2>
+# 比较两个提交的差异（使用当前分支）
+python main.py --repo /path/to/repo --diff a1b2c3d e5f6g7h
+
+# 比较两个提交的差异（指定分支）
+python main.py --repo /path/to/repo --branch main --diff a1b2c3d e5f6g7h
 ```
 
 - 提取两个分支之间的差异文件进行分析（自动使用各个分支的最新提交）：
 ```bash
-python main.py --repo /path/to/repo --diff-branch <branch1> <branch2>
+# 比较两个分支的最新提交
+python main.py --repo /path/to/repo --diff-branch main feature-branch
+```
+
+### 配置输出模式
+
+Git2Base 支持多种输出模式，包括 CSV、PostgreSQL 和 SQLite。可以通过修改 `config/config.yaml` 文件中的 `output.type` 参数来切换输出模式。
+
+#### CSV 模式
+```bash
+# 在 config.yaml 中设置 output.type 为 "csv"
+# 然后运行命令
+python main.py --repo /path/to/repo --branch main
+```
+
+#### PostgreSQL 模式
+```bash
+# 在 config.yaml 中设置 output.type 为 "postgresql"
+# 配置相应的数据库连接参数
+# 然后运行命令
+python main.py --repo /path/to/repo --branch main
+```
+
+#### SQLite 模式
+```bash
+# 在 config.yaml 中设置 output.type 为 "sqlite"
+# 配置相应的数据库文件路径
+# 然后运行命令
+python main.py --repo /path/to/repo --branch main
 ```
 
 ## 分析器
@@ -137,21 +194,9 @@ python -m unittest tests/test_analyzers.py -v
 - stack-files-count.sql: 统计堆栈中的文件数量
 - XMLElem.sql: 查询XML元素数量
 
-## GUI功能
+## 与Git工具的集成
+在Git工具中使用命令行配置快捷命令可以达到通过图形界面的使用目的。因此本工具对于数据收集部分不打算提供图形界面的支持。
 
-Git2Base 提供了图形用户界面，支持以下功能：
-
-- 提交列表展示
-- 提交差异对比
-- 提交分析结果可视化
-- 拖拽提交到输入框快速输入Hash
-
-### 拖拽功能使用说明
-
-1. 在提交列表中选择一个提交
-2. 按住鼠标左键拖动提交行
-3. 将提交行拖拽到"提交1"或"提交2"输入框中
-4. 松开鼠标左键，提交的Hash值将自动填入输入框
 
 ## 贡献指南
 
