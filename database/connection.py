@@ -1,7 +1,9 @@
+from contextlib import contextmanager
+from datetime import datetime
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import sessionmaker, scoped_session
-from contextlib import contextmanager
 import os
+import sys
 
 from config.config import load_output_config
 
@@ -10,7 +12,7 @@ engine = None
 Session = None
 
 
-def init_output() -> Engine | None:
+def init_output(mode = None) -> Engine | None:
     """Initialize SQLAlchemy database connection"""
     global engine, Session
 
@@ -18,7 +20,28 @@ def init_output() -> Engine | None:
 
     db_url = ""
     if config["type"] == "csv":
-        os.makedirs(os.path.dirname(config["csv"]["path"]), exist_ok=True)
+        if not mode:
+            return None
+
+        # 获取当前时间戳
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # 获取 repo 参数：支持 --repo= 和 --repo /path/to/repo 两种方式
+        try:
+            if "--repo" in sys.argv:
+                repo_index = sys.argv.index("--repo")
+                repo_path = sys.argv[repo_index + 1]
+                repo_name = os.path.basename(os.path.abspath(repo_path))
+            else:
+                raise ValueError("No --repo argument found")
+        except Exception:
+            repo_name = "unknown"
+        output_dir = os.path.join(config["csv"]["path"], repo_name, f"{mode}_{timestamp}")
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 更新 config 中的 csv path 为新目录
+        config["csv"]["path"] = output_dir
+
         return None
     elif config["type"] == "postgresql":
         db_url = f"postgresql+psycopg2://{config['postgresql']['user']}:{config['postgresql']['password']}@{config['postgresql']['host']}:{config['postgresql']['port']}/{config['postgresql']['database']}"

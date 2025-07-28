@@ -1,7 +1,7 @@
 output:
   type: "csv"  # 支持postgresql或sqlite或者csv
   csv:
-    path: "/Users/yougikou/Documents/Github/git2base/csv_output"
+    path: "data"  # 默认为项目的data相对路径
   postgresql:
     host: "localhost"
     port: 5432
@@ -9,7 +9,7 @@ output:
     user: "gituser"
     password: "giko"
   sqlite:
-    database: "/Users/yougikou/Documents/Github/git2base/gitbase.db"  # SQLite数据库文件路径
+    database: "gitbase.db"  # SQLite数据库文件路径 - 默认为项目的根路径
 
 stacks:
   # - name: Assets
@@ -33,24 +33,24 @@ stacks:
   - name: Java
     paths: []
     extensions: ["java"]
-  - name: Script
-    paths: []
-    extensions: ["sh", "bat"]
-  - name: Github
-    paths: [.github]
-    extensions: []
-  - name: VueScript
-    paths: [frontend/src]
-    extensions: ["vue"]
-  - name: TypeScript
-    paths: [common/src, daemon/src, frontend/src, panel/src]
-    extensions: ["ts"]
-  - name: CSS
-    paths: [common/src, daemon/src, frontend/src, panel/src]
-    extensions: ["css", "scss"]
   - name: XML
     paths: []
     extensions: ["xml"]
+  - name: Script
+    paths: []
+    extensions: ["sh", "bat"]
+  - name: Python
+    paths: ["config", "database", "git", "notebooks"]
+    extensions: ["py"]
+  - name: PyTest
+    paths: ["tests"]
+    extensions: ["py"]
+  - name: Yaml
+    paths: []
+    extensions: ["yaml"]
+  - name: Jupyter
+    paths: [notebooks]
+    extensions: ["ipynb"]
 
 analyzers:
   - name: FileLineCount

@@ -5,16 +5,39 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Git2Base Debug - repo",
+      "name": "Git2Base Debug - snapshot",
       "type": "debugpy",
       "request": "launch",
       "program": "main.py",
       "console": "integratedTerminal",
       "args": [
-        "--repo", "/Users/yougikou/Documents/Github/MCSManager",
-        "--branch", "master",
-        "--diff", "58e06b52213047c7bfdea305004299e83cd79b6d", "ac3c30939ab454a3098835465941f853652ad52f",
-        // "--diff-branch", "master", "dev"
+        "--repo", "./",
+        "--branch", "main",
+        "--snapshot", "c92f3b65d993b0fa7deae97fc61770738d6f9176",
+      ]
+    },
+    {
+      "name": "Git2Base Debug - diff",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "main.py",
+      "console": "integratedTerminal",
+      "args": [
+        "--repo", "./",
+        "--branch", "main",
+        "--diff", "6685bcdb3c3376fd788fc04c78cef3ffdbaa795d", "c92f3b65d993b0fa7deae97fc61770738d6f9176",
+      ]
+    },
+    {
+      "name": "Git2Base Debug - diff-branch",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "main.py",
+      "console": "integratedTerminal",
+      "args": [
+        "--repo", "./",
+        "--branch", "main",
+        "--diff-branch", "main", "dev"
       ]
     }
   ]
