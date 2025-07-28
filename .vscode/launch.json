@@ -36,8 +36,7 @@
       "console": "integratedTerminal",
       "args": [
         "--repo", "./",
-        "--branch", "main",
-        "--diff-branch", "main", "dev"
+        "--diff-branch", "main", "feature/add-jupyter-support"
       ]
     }
   ]
