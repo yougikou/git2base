@@ -1,6 +1,6 @@
 # Git2Base
 
-[中文版本](../readme.md)
+[Chinese Version](../readme.md)
 
 Git2Base is a Python tool that extracts and analyzes Git repository data into a PostgreSQL database. It provides the following features:
 
@@ -20,7 +20,7 @@ pip install -r requirements.txt
 output:
   type: "csv"  # Supports postgresql, sqlite, or csv
   csv:
-    path: "<full path>"
+    path: "data"  # Default is the project's data relative path
   postgresql:
     host: "localhost"
     port: 5432
@@ -28,12 +28,13 @@ output:
     user: "gituser"
     password: "giko"
   sqlite:
-    database: "<full path>/gitbase.db"  # SQLite database file path
+    database: "gitbase.db"  # SQLite database file path - defaults to project root
 ```
 
 ## Data Structure
 
 The following is the data structure used by Git2Base:
+
 - Diff: When analyzing differences between two commits/branches, DiffResult is mainly used
   - 2 Commits
   - Multiple DiffResults
@@ -48,8 +49,6 @@ The following is the data structure used by Git2Base:
   - Multiple Commits
   - Multiple DiffResults (containing string/line count changes in Hunks, no static analysis for files)
 
-<img src="assets/gitbase-er.svg" alt="Architecture Diagram" width="600">
-
 ### Table Descriptions
 
 - `git_commit`: Stores basic Git commit information, including commit hash, author, committer, time, etc.
@@ -58,21 +57,26 @@ The following is the data structure used by Git2Base:
 - `git_analysis_result`: Stores analysis results of files by analyzers, including match count and detailed content.
 - `git_file_snapshot`: Stores snapshots of file content for analysis and comparison.
 
+<details>
+<summary>Click to view ER diagram</summary>
+<br>
+<img src="assets/gitbase-er.svg" alt="Architecture Diagram" width="600">
+</details>
+
 ## Usage Instructions
 
-### Import Git Data
+### Configure Output Mode
 
-- Reset database:
-```bash
-python main.py --reset-db
-```
+Git2Base supports multiple output modes, including CSV, PostgreSQL and SQLite. You can switch output modes by modifying the `output.type` parameter in the `config/config.yaml` file.
+
+### Import Git Data
 
 - Extract complete file structure snapshot from a specified commit for analysis (if --branch is omitted, the currently checked out branch is used; if commit hash is omitted, the latest commit of the current branch is used):
 ```bash
 # Use the currently checked out branch and latest commit
 python main.py --repo /path/to/repo
 
-# Specify branch and latest commit
+# Specify branch, default to latest commit
 python main.py --repo /path/to/repo --branch main
 
 # Specify branch and specific commit
@@ -94,34 +98,32 @@ python main.py --repo /path/to/repo --branch main --diff a1b2c3d e5f6g7h
 python main.py --repo /path/to/repo --diff-branch main feature-branch
 ```
 
-### Configure Output Mode
-
-Git2Base supports multiple output modes, including CSV, PostgreSQL, and SQLite. You can switch output modes by modifying the `output.type` parameter in the `config/config.yaml` file.
-
-#### CSV Mode
+- Reset database:
 ```bash
-# Set output.type to "csv" in config.yaml
-# Then run the command
-python main.py --repo /path/to/repo --branch main
+python main.py --reset-db
 ```
 
-#### PostgreSQL Mode
-```bash
-# Set output.type to "postgresql" in config.yaml
-# Configure the corresponding database connection parameters
-# Then run the command
-python main.py --repo /path/to/repo --branch main
-```
+## Jupyter Notebook Templates
 
-#### SQLite Mode
-```bash
-# Set output.type to "sqlite" in config.yaml
-# Configure the corresponding database file path
-# Then run the command
-python main.py --repo /path/to/repo --branch main
-```
+### Code Volume Distribution Template
+| tech_stack | total_char_count | file_count |
+|------------|------------------|------------|
+| Python     | 30641.0          | 6          |
+| PyTest     | 2508.0           | 1          |
+| Yaml       | 1762.0           | 1          |
 
-## Analyzers
+<img src="assets/dist_sample.png" alt="Code Volume Distribution" height="480">
+
+### Code Volume Level Template
+| tech_stack   |   1k-2k |   2k-3k |   3k-10k |   10k-50k |
+|--------------|---------|---------|----------|------------|
+| PyTest       |       0 |       1 |        0 |          0 |
+| Python       |       0 |       2 |        3 |          1 |
+| Yaml         |       1 |       0 |        0 |          0 |
+
+<img src="assets/level_sample.png" alt="Code Volume Level Statistics" height="480">
+
+## Analyzers (Extension)
 
 Git2Base provides an extensible analyzer framework that supports dynamic loading and registration of analyzers.
 

@@ -1,5 +1,10 @@
-pygit2
+ipywidgets
+jupyter
+matplotlib
+pandas
 psycopg2-binary
-tqdm
+pygit2
 pyyaml
+seaborn
 sqlalchemy
+tqdm

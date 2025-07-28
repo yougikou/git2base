@@ -242,8 +242,11 @@ def diff_branch_commit_exec(
 
 def validate_args(args):
     exclusive_groups = [
-        ("commit_hash", "diff"),
-        ("commit_hash", "diff_branch"),
+        ("snapshot", "diff"),
+        ("snapshot", "diff_branch"),
+        ("history", "diff"),
+        ("history", "diff_branch"),
+        ("history", "snapshot"),
         ("diff", "diff_branch"),
         ("branch", "diff_branch"),
     ]
@@ -260,14 +263,18 @@ def resolve_branch_and_commits(args, repo):
         print(f"未指定分支，使用当前checkout的分支: {args.branch}")
 
     # 如果指定了分支但没有指定提交哈希或指定比较提交哈希，则获取该分支的最新提交
-    if args.branch and not args.commit_hash and not args.diff:
+    if args.branch and not args.snapshot and not args.history and not args.diff:
         latest_commit_hash = str(repo.branches[args.branch].target)
-        print(f"没有指定提交，获取{args.branch}的最新提交: {latest_commit_hash}")
-        return "commit", args.branch, latest_commit_hash, ""
+        print(f"没有指定模式以及提交，获取{args.branch}的最新提交: {latest_commit_hash}，以snapshot模式执行")
+        return "snapshot", args.branch, latest_commit_hash, ""
 
-    if args.branch and args.commit_hash:
-        full_commit_hash = parse_short_hash(repo, args.commit_hash)
-        return "commit", args.branch, full_commit_hash, ""
+    if args.branch and args.snapshot:
+        snapshot_commit_hash = parse_short_hash(repo, args.snapshot)
+        return "snapshot", args.branch, snapshot_commit_hash, ""
+
+    if args.branch and args.history:
+        history_commit_hash = parse_short_hash(repo, args.history)
+        return "history", args.branch, history_commit_hash, ""
 
     if args.branch and args.diff:
         base_commit_hash = parse_short_hash(repo, args.diff[0])
@@ -289,7 +296,10 @@ def main():
         "--branch", type=str, help="指定分支，如果未提供则使用当前checkout的分支"
     )
     parser.add_argument(
-        "--commit_hash", type=str, help="分析指定commit hash的文件，支持短哈希"
+        "--snapshot", type=str, help="分析指定snapshot commit hash的文件，支持短哈希"
+    )
+    parser.add_argument(
+        "--history", type=str, help="分析指定history commit hash过后的提交数据，支持短哈希"
     )
     parser.add_argument(
         "--diff",
@@ -323,14 +333,15 @@ def main():
         return
 
     validate_args(args)
-    engine = init_output()
+    repo = Repository(args.repo)
+    mode, branch, base, target = resolve_branch_and_commits(args, repo)
+    engine = init_output(mode)
     if engine:
         create_tables(engine)
-    repo = Repository(args.repo)
 
-    mode, branch, base, target = resolve_branch_and_commits(args, repo)
-
-    if mode == "commit":
+    if mode == "snapshot":
+        commit_exec(repo, branch, base)
+    elif mode == "history":
         commit_exec(repo, branch, base)
     elif mode == "diff":
         diff_commit_exec(repo, branch, base, target)

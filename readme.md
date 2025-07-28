@@ -11,25 +11,30 @@ Git2Base 是一个将Git仓库数据提取并分析到PostgreSQL数据库的Pyth
 ## 安装
 
 1. 安装依赖：
-```bash
-pip install -r requirements.txt
-```
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-2. 在config.yaml中配置CSV输出或者数据库连接：
-```yaml
-output:
-  type: "csv"  # 支持postgresql或sqlite或者csv
-  csv:
-    path: "<full path>"
-  postgresql:
-    host: "localhost"
-    port: 5432
-    database: "gitbase"
-    user: "gituser"
-    password: "giko"
-  sqlite:
-    database: "<full path>/gitbase.db"  # SQLite数据库文件路径
-```
+2. 在config.yaml中配置CSV输出或者数据库连接
+    <details>
+    <summary>点击展开配置示例</summary>
+
+    ```yaml
+    output:
+      type: "csv"  # 支持postgresql或sqlite或者csv
+      csv:
+        path: "data"  # 默认为项目的data相对路径
+      postgresql:
+        host: "localhost"
+        port: 5432
+        database: "gitbase"
+        user: "gituser"
+        password: "giko"
+      sqlite:
+        database: "gitbase.db"  # SQLite数据库文件路径 - 默认为项目的根路径
+    ```
+
+    </details>
 
 ## 使用的数据结构
 
@@ -48,8 +53,6 @@ output:
   - 多个Commit
   - 多个DiffResult（包含Hunk的字符串/行数变更，无需针对文件的静态分析）
 
-<img src="doc/assets/gitbase-er.svg" alt="架构图" width="600">
-
 ### 表说明
 
 - `git_commit`: 存储Git提交的基本信息，包括提交哈希、作者、提交者、时间等。
@@ -58,25 +61,30 @@ output:
 - `git_analysis_result`: 存储分析器对文件的分析结果，包括匹配次数和详细内容。
 - `git_file_snapshot`: 存储文件内容的快照，用于分析和比较。
 
+<details>
+<summary>点击展开查看ER图</summary>
+<br>
+<img src="doc/assets/gitbase-er.svg" alt="架构图" width="600">
+</details>
+
 ## 使用说明
 
-### 导入Git数据
+### 配置输出模式
 
-- 重置数据库：
-```bash
-python main.py --reset-db
-```
+Git2Base 支持多种输出模式，包括 CSV、PostgreSQL 和 SQLite。可以通过修改 `config/config.yaml` 文件中的 `output.type` 参数来切换输出模式。（在安装说明中已经提供配置示例）
+
+### 导入Git数据
 
 - 从指定提交提取完整文件结构快照进行分析（如果省略--branch则使用当前检出分支，如果省略提交哈希则使用当前分支最新提交）：
 ```bash
 # 使用当前检出的分支和最新提交
 python main.py --repo /path/to/repo
 
-# 指定分支和最新提交
+# 指定分支，默认使用最新提交
 python main.py --repo /path/to/repo --branch main
 
 # 指定分支和特定提交
-python main.py --repo /path/to/repo --branch main --commit_hash a1b2c3d
+python main.py --repo /path/to/repo --branch main --snapshot a1b2c3d
 ```
 
 - 提取两个提交之间的差异文件进行分析（不指定分支的时候使用当前检出的分支）：
@@ -94,34 +102,32 @@ python main.py --repo /path/to/repo --branch main --diff a1b2c3d e5f6g7h
 python main.py --repo /path/to/repo --diff-branch main feature-branch
 ```
 
-### 配置输出模式
-
-Git2Base 支持多种输出模式，包括 CSV、PostgreSQL 和 SQLite。可以通过修改 `config/config.yaml` 文件中的 `output.type` 参数来切换输出模式。
-
-#### CSV 模式
+- 重置数据库（仅在）：
 ```bash
-# 在 config.yaml 中设置 output.type 为 "csv"
-# 然后运行命令
-python main.py --repo /path/to/repo --branch main
+python main.py --reset-db
 ```
 
-#### PostgreSQL 模式
-```bash
-# 在 config.yaml 中设置 output.type 为 "postgresql"
-# 配置相应的数据库连接参数
-# 然后运行命令
-python main.py --repo /path/to/repo --branch main
-```
+## Jupyter Notebook使用模版
 
-#### SQLite 模式
-```bash
-# 在 config.yaml 中设置 output.type 为 "sqlite"
-# 配置相应的数据库文件路径
-# 然后运行命令
-python main.py --repo /path/to/repo --branch main
-```
+### 代码量占比模版
+| tech_stack | total_char_count | file_count |
+|------------|------------------|------------|
+| Python     | 30641.0          | 6          |
+| PyTest     | 2508.0           | 1          |
+| Yaml       | 1762.0           | 1          |
 
-## 分析器
+<img src="doc/assets/dist_sample.png" alt="代码量比例" height="480">
+
+### 代码量分布模版
+| tech_stack   |   1k-2k |   2k-3k |   3k-10k |   10k-50k |
+|--------------|---------|---------|----------|------------|
+| PyTest       |       0 |       1 |        0 |          0 |
+| Python       |       0 |       2 |        3 |          1 |
+| Yaml         |       1 |       0 |        0 |          0 |
+
+<img src="doc/assets/level_sample.png" alt="代码量分级统计" height="480">
+
+## 分析器（扩展）
 
 Git2Base 提供了一个可扩展的分析器框架，支持动态加载和注册分析器。
 
