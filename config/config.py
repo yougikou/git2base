@@ -1,11 +1,17 @@
 import threading
 import yaml
 import os
+import logging.config
 
 # Cached configuration with thread safety and validation
 _config_cache = None
 _config_last_modified = 0
 _config_lock = threading.Lock()
+_logger_config_loaded = False
+
+# Logger names used throughout the project
+LOGGER_GIT2BASE = "git2base"
+LOGGER_NO_TECHSTACK = "no_techstack_identified"
 
 
 def _load_config():
@@ -18,7 +24,29 @@ def _load_config():
         RuntimeError: If config file is missing or invalid
         ValueError: If config is malformed
     """
-    global _config_cache, _config_last_modified
+    global _config_cache, _config_last_modified, _logger_config_loaded
+
+    # Load logger config once if logger.yaml exists
+    if not _logger_config_loaded:
+        logger_config_path = "config/logger.yaml"
+        if os.path.exists(logger_config_path):
+            with open(logger_config_path, "r", encoding="utf-8") as f:
+                logging_config = yaml.safe_load(f)
+
+            # Ensure all FileHandler paths have existing directories
+            for handler in logging_config.get("handlers", {}).values():
+                if handler.get("class") == "logging.FileHandler":
+                    log_file = handler.get("filename")
+                    if log_file:
+                        log_dir = os.path.dirname(log_file)
+                        if log_dir and not os.path.exists(log_dir):
+                            os.makedirs(log_dir, exist_ok=True)
+
+            # Apply logging configuration
+            logging.config.dictConfig(logging_config)
+        else:
+            logging.basicConfig(level=logging.INFO)
+        _logger_config_loaded = True
 
     try:
         mod_time = os.path.getmtime("config/config.yaml")
@@ -44,17 +72,22 @@ def _load_config():
             raise ValueError("Missing required config section: output")
 
         if "stacks" not in config:
-            print(
+            logging.warning(
                 "Warning: no 'stacks' defined in config, files will not be classified. Only analyzers with tech_stacks set to 'All' will be applied."
             )
         if "analyzers" not in config:
-            print(
+            logging.warning(
                 "Warning: no 'analyzers' defined in config, no analysis will be applied."
             )
 
         _config_cache = config
         _config_last_modified = mod_time
         return _config_cache
+
+
+def load_input_config():
+    config = _load_config()
+    return config.get("input", {"include": [], "exclude": []})
 
 
 def load_output_config():
@@ -72,3 +105,8 @@ def load_analyzer_config():
     """Load analyzer configuration from cached config"""
     config = _load_config()
     return config.get("analyzers", [])
+
+
+def get_logger(name: str) -> logging.Logger:
+    _load_config()
+    return logging.getLogger(name)

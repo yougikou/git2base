@@ -5,7 +5,7 @@ from datetime import datetime
 from pygit2.enums import DeltaStatus, DiffOption
 from pygit2.repository import Repository
 
-from config.config import load_analyzer_config
+from config.config import LOGGER_NO_TECHSTACK, get_logger, load_analyzer_config, load_input_config
 from database.model import AnalysisResult, Commit, CommitFile, DiffResult, FileSnapshot
 from git.utils import get_git_file_snapshot, identify_tech_stack
 
@@ -23,6 +23,8 @@ DELTA_STATUS_MAP = {
     DeltaStatus.CONFLICTED: "U",
     DeltaStatus.IGNORED: "I",
 }
+
+logger = get_logger(LOGGER_NO_TECHSTACK)
 
 
 def _load_analyzers(analyzers):
@@ -50,8 +52,11 @@ def _load_analyzers(analyzers):
     return loaded_analyzers
 
 
+include_paths = load_input_config()["include"]
+exclude_paths = load_input_config()["exclude"]
 analyzers = load_analyzer_config()
 loadedAnalyzers = _load_analyzers(analyzers) if analyzers else {}
+
 
 def apply_analysis(
     repo: Repository,
@@ -67,7 +72,7 @@ def apply_analysis(
     )
 
     if tech_stack is None:
-        print(f"No tech stack identified for file: {file_path}")
+        logger.warning(f"No tech stack identified for file: {file_path}")
         return file_snapshot, []
 
     results = []
@@ -183,6 +188,11 @@ class SnapshotAnalysisWrapper:
         repo_root = os.path.abspath(os.path.join(self.repo.path, ".."))
         for file_path, file_oid in walk_tree(self.commit.tree, repo_root):
             related_path = os.path.relpath(file_path, repo_root)
+            if (exclude_paths and related_path.startswith(tuple(exclude_paths))) or (
+                include_paths and not related_path.startswith(tuple(include_paths))
+            ):
+                continue
+
             tech_stack = identify_tech_stack(related_path)
 
             files.append(
@@ -222,7 +232,7 @@ class DiffAnalysisWrapper:
         self.target_branch = target_branch
         self.base_commit = base_commit
         self.target_commit = target_commit
-        self.diff = self.target_commit.tree.diff_to_tree(self.base_commit.tree)
+        self.diff = self.base_commit.tree.diff_to_tree(self.target_commit.tree)
 
     def get_db_commits(self) -> list[Commit]:
         return [
@@ -255,6 +265,12 @@ class DiffAnalysisWrapper:
     def get_db_diff_results(self) -> list[DiffResult]:
         files = []
         for patch in self.diff:
+            related_path = patch.delta.new_file.path
+            if (exclude_paths and related_path.startswith(tuple(exclude_paths))) or (
+                include_paths and not related_path.startswith(tuple(include_paths))
+            ):
+                continue
+
             diff_result = DiffResult(
                 base_commit_hash=str(self.base_commit.id),
                 target_commit_hash=str(self.target_commit.id),

@@ -1,15 +1,10 @@
 import json
 import unittest
-import logging
 from analyzers.RegexMatchCountAnalyzer import RegexMatchCountAnalyzer
 from analyzers.XMLElementCountAnalyzer import XMLElementCountAnalyzer
+from config.config import get_logger
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+logger = get_logger("analyzer_test")
 
 class TestAnalyzers(unittest.TestCase):
     
@@ -33,17 +28,17 @@ class TestAnalyzers(unittest.TestCase):
             with self.subTest(analyzer=analyzer_config["name"]):
                 # 初始化分析器
                 analyzer = analyzer_config["class"](analyzer_config["params"])
-                logger.info(f"开始测试 {analyzer_config['name']}")
+                logger.info(f"Start testing {analyzer_config['name']}")
                 
                 # 获取测试用例
                 test_cases = analyzer.get_test_cases()
-                logger.info(f"{analyzer_config['name']} 测试用例数量: {len(test_cases)}")
+                logger.info(f"{analyzer_config['name']} Number of test cases: {len(test_cases)}")
                 
                 # 执行所有测试用例
                 for i, test_case in enumerate(test_cases, 1):
                     with self.subTest(test_case=i):
-                        logger.info(f"正在执行测试用例 {i}: {test_case['name']}")
-                        logger.debug(f"测试内容:\n{test_case['content']}")
+                        logger.info(f"Executing test cases {i}: {test_case['name']}")
+                        logger.debug(f"Test content:\n{test_case['content']}")
                         
                         # 执行分析
                         count, result = analyzer.analyze(test_case["content"])
@@ -57,9 +52,9 @@ class TestAnalyzers(unittest.TestCase):
                         logger.debug(result_json)
                         self.assertEqual(result_json, expected_json)
                         
-                        logger.info(f"测试用例 {i} 通过")
+                        logger.info(f"Test case {i} passed")
                 
-                logger.info(f"{analyzer_config['name']} 所有测试结束")
+                logger.info(f"{analyzer_config['name']} All tests completed")
 
 if __name__ == '__main__':
     unittest.main()

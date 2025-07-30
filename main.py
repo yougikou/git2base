@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from tqdm import tqdm
 from typing import cast
 
-from config.config import load_output_config
+from config.config import LOGGER_GIT2BASE, get_logger, load_output_config
 from database.connection import init_output
 from database.model import create_tables, reset_tables
 from database.operation import (
@@ -22,6 +22,7 @@ from git.wrapper import SnapshotAnalysisWrapper, DiffAnalysisWrapper
 
 
 output_config = load_output_config()
+logger = get_logger(LOGGER_GIT2BASE)
 
 
 def commit_exec(
@@ -62,14 +63,16 @@ def commit_exec(
     commit_files_data = snapshot_wrapped.get_db_commit_files()
 
     if output_config["type"] == "csv":
+        logger.debug("Write commit data")
         write_csv(
             [commit_data.to_dict()],
-            f"{output_config["csv"]["path"]}/commits.csv",
+            f"{output_config['csv']['path']}/commits.csv",
             False,
         )
+        logger.debug("Write commit file data")
         write_csv(
             [f.to_dict() for f in commit_files_data],
-            f"{output_config["csv"]["path"]}/commit_files.csv",
+            f"{output_config['csv']['path']}/commit_files.csv",
             False,
         )
     else:
@@ -78,8 +81,10 @@ def commit_exec(
                 insert_commits([commit_data])
             commit_files_data = insert_commit_files(commit_files_data)
         except IntegrityError as e:
-            print(f"CommitFile UNIQUE constraint failed. Result already exist: {e}")
-            print(f"Process exit.")
+            logger.error(
+                f"CommitFile UNIQUE constraint failed. Result already exist: {e}"
+            )
+            logger.error("Process exit.")
             sys.exit(1)
 
     with tqdm(
@@ -96,9 +101,10 @@ def commit_exec(
 
             if output_config["type"] == "csv":
                 rows = [f.to_dict() for f in analysis_results_data]
+                logger.debug(f"Write analysis results of file {file.path}")
                 write_csv(
                     rows,
-                    f"{output_config["csv"]["path"]}/analysis_results.csv",
+                    f"{output_config['csv']['path']}/analysis_results.csv",
                     append_mode,
                 )
                 if rows:
@@ -110,7 +116,7 @@ def commit_exec(
                     if save_snapshot:
                         insert_file_snapshot([file_snapshot])
                 except Exception as e:
-                    print(f"Process exit.")
+                    logger.error("Process exit.")
                     sys.exit(1)
 
             # 更新进度条
@@ -118,7 +124,7 @@ def commit_exec(
             pbar.n = processed_count
             pbar.refresh()
 
-    print("所有文件分析处理完成")
+    logger.info("All files analyzed and processed")
 
 
 def diff_branch_exec(
@@ -177,14 +183,16 @@ def diff_branch_commit_exec(
     commits_data = diff_wrapped.get_db_commits()
     diff_results_data = diff_wrapped.get_db_diff_results()
     if output_config["type"] == "csv":
+        logger.debug("Write commit data")
         write_csv(
             [f.to_dict() for f in commits_data],
-            f"{output_config["csv"]["path"]}/commits.csv",
+            f"{output_config['csv']['path']}/commits.csv",
             False,
         )
+        logger.debug("Write diff results data")
         write_csv(
             [f.to_dict() for f in diff_results_data],
-            f"{output_config["csv"]["path"]}/diff_results.csv",
+            f"{output_config['csv']['path']}/diff_results.csv",
             False,
         )
     else:
@@ -195,8 +203,10 @@ def diff_branch_commit_exec(
 
             diff_results_data = insert_diff_results(diff_results_data)
         except IntegrityError as e:
-            print(f"DiffResult UNIQUE constraint failed. Result already exist: {e}")
-            print(f"Process exit.")
+            logger.error(
+                f"DiffResult UNIQUE constraint failed. Result already exist: {e}"
+            )
+            logger.error("Process exit.")
             sys.exit(1)
 
     with tqdm(
@@ -215,9 +225,10 @@ def diff_branch_commit_exec(
 
             if output_config["type"] == "csv":
                 rows = [f.to_dict() for f in analysis_results_data]
+                logger.debug(f"Write analysis results of file {diff_result_data.target_path}")
                 write_csv(
                     rows,
-                    f"{output_config["csv"]["path"]}/analysis_results.csv",
+                    f"{output_config['csv']['path']}/analysis_results.csv",
                     append_mode,
                 )
                 if rows:
@@ -229,7 +240,7 @@ def diff_branch_commit_exec(
                     if save_snapshot:
                         insert_file_snapshot(file_snapshots)
                 except Exception as e:
-                    print(f"Process exit.")
+                    logger.error("Process exit.")
                     sys.exit(1)
 
             # 更新进度条
@@ -237,7 +248,7 @@ def diff_branch_commit_exec(
             pbar.n = processed_count
             pbar.refresh()
 
-    print("所有文件分析处理完成")
+    logger.info("All files analyzed and processed")
 
 
 def validate_args(args):
@@ -252,7 +263,7 @@ def validate_args(args):
     ]
     for a, b in exclusive_groups:
         if getattr(args, a) and getattr(args, b):
-            print(f"错误：不能同时指定 --{a} 和 --{b}。请分别使用。")
+            logger.error(f"Error: Cannot specify both --{a} and --{b}. Please use each separately.")
             sys.exit(1)
 
 
@@ -260,12 +271,14 @@ def resolve_branch_and_commits(args, repo):
     # 不指定分支且不是比较分支模式时，使用当前分支
     if not args.branch and not args.diff_branch:
         args.branch = repo.head.shorthand
-        print(f"未指定分支，使用当前checkout的分支: {args.branch}")
+        logger.info(f"No branch is specified, use the branch of the current checkout: {args.branch}")
 
     # 如果指定了分支但没有指定提交哈希或指定比较提交哈希，则获取该分支的最新提交
     if args.branch and not args.snapshot and not args.history and not args.diff:
         latest_commit_hash = str(repo.branches[args.branch].target)
-        print(f"没有指定模式以及提交，获取{args.branch}的最新提交: {latest_commit_hash}，以snapshot模式执行")
+        logger.info(
+            f"Without specifying a mode or commit, get the latest commit of {args.branch}: {latest_commit_hash}, executed in snapshot mode"
+        )
         return "snapshot", args.branch, latest_commit_hash, ""
 
     if args.branch and args.snapshot:
@@ -284,34 +297,36 @@ def resolve_branch_and_commits(args, repo):
     if args.diff_branch:
         return "diff_branch", "", args.diff_branch[0], args.diff_branch[1]
 
-    print("错误：未提供有效的命令参数")
+    logger.error("Error: No valid command arguments were provided")
     sys.exit(1)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Git 数据库导入工具")
-    parser.add_argument("--reset-db", action="store_true", help="重置数据库")
-    parser.add_argument("--repo", type=str, help="指定Git仓库路径")
+    parser = argparse.ArgumentParser(description="Git database import/analysis tool")
+    parser.add_argument("--reset-db", action="store_true", help="Reset the database")
+    parser.add_argument("--repo", type=str, help="Specify the Git repository path")
     parser.add_argument(
-        "--branch", type=str, help="指定分支，如果未提供则使用当前checkout的分支"
+        "--branch", type=str, help="Specify the branch. If not provided, the current checkout branch will be used."
     )
     parser.add_argument(
-        "--snapshot", type=str, help="分析指定snapshot commit hash的文件，支持短哈希"
+        "--snapshot", type=str, help="Analyze files with specified snapshot commit hash, supporting short hashes"
     )
     parser.add_argument(
-        "--history", type=str, help="分析指定history commit hash过后的提交数据，支持短哈希"
+        "--history",
+        type=str,
+        help="Analyze the commit data after the specified history commit hash, supporting short hashes",
     )
     parser.add_argument(
         "--diff",
         nargs=2,
         metavar=("base_commit", "target_commit"),
-        help="分析两个commit的差异文件，支持短哈希",
+        help="Analyze the difference between two commit files, support short hash",
     )
     parser.add_argument(
         "--diff-branch",
         nargs=2,
         metavar=("base_branch", "target_branch"),
-        help="分析两个分支的差异文件，自动使用各自的最新提交",
+        help="Analyze the difference files between two branches and automatically use their respective latest commits",
     )
 
     if len(sys.argv) == 1:
@@ -323,13 +338,13 @@ def main():
         engine = init_output()
         if engine:
             reset_tables(engine)
-            print("数据库已重置")
+            logger.info("Database reset")
         else:
-            print("输出模式为CSV，忽略数据库操作")
+            logger.info("Output mode is CSV, ignoring database operations")
         return
 
     if not args.repo:
-        print("错误：未指定Git仓库路径。请使用 --repo 指定路径。")
+        logger.error("Error: Git repository path not specified. Please use --repo to specify the path")
         return
 
     validate_args(args)
