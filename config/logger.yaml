@@ -1,0 +1,54 @@
+version: 1
+disable_existing_loggers: False
+
+formatters:
+  simple:
+    format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    level: INFO
+    formatter: simple
+    stream: ext://sys.stdout
+
+  git2base:
+    class: logging.FileHandler
+    level: DEBUG
+    formatter: simple
+    filename: logs/git2base.log
+    encoding: utf-8
+
+  no_techstack_identified:
+    class: logging.FileHandler
+    level: INFO
+    formatter: simple
+    filename: logs/no_techstack_identified.log
+    encoding: utf-8
+
+  analyzer_test:
+    class: logging.FileHandler
+    level: INFO
+    formatter: simple
+    filename: logs/analyzer_test.log
+    encoding: utf-8
+
+loggers:
+  git2base:
+    level: DEBUG
+    handlers: [console, git2base]
+    propagate: true
+
+  no_techstack_identified:
+    level: INFO
+    handlers: [console, no_techstack_identified]
+    propagate: true
+
+  analyzer_test:
+    level: INFO
+    handlers: [console, analyzer_test]
+    propagate: true
+
+root:
+  level: WARNING
+  handlers: [console]

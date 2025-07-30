@@ -5,8 +5,9 @@ import pygit2
 from pygit2.repository import Repository
 from typing import cast
 
-from config.config import load_stacks_config
+from config.config import LOGGER_GIT2BASE, get_logger, load_stacks_config
 
+logger = get_logger(LOGGER_GIT2BASE)
 
 def is_binary(blob):
     if isinstance(blob, bytes):
@@ -76,7 +77,7 @@ def get_git_file_snapshot(hash: str, repo: Repository) -> str:
 
 def write_csv(rows: list[dict[str, str]], filename: str, append_mode=False):
     if not rows:
-        print(f"No data to write to {filename}")
+        logger.debug(f"No data to write to {filename}")
         return
 
     file_exists = os.path.exists(filename)
@@ -105,4 +106,4 @@ def write_csv(rows: list[dict[str, str]], filename: str, append_mode=False):
             writer.writeheader()
             writer.writerows(rows)
 
-    print(f"CSV {'appended to' if append_mode else 'written to'} {filename}")
+    logger.debug(f"CSV {'appended to' if append_mode else 'written to'} {filename}")
