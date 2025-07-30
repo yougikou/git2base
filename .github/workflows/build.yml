@@ -36,7 +36,9 @@ jobs:
         run: pyinstaller main.py --onefile --name git2base
         shell: bash
 
-      - name: Zip output with version
+      - name: Zip output with version (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
         run: |
           VERSION=${{ github.ref_name }}
           if [ -z "$VERSION" ]; then
@@ -44,7 +46,17 @@ jobs:
           fi
           cd dist
           zip git2base-${VERSION}-${{ matrix.os }}.zip git2base*
-        shell: bash
+
+      - name: Zip output with version (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $VERSION = "${{ github.ref_name }}"
+          if (-not $VERSION) {
+            $VERSION = "manual-" + (Get-Date -Format "yyyyMMdd-HHmmss")
+          }
+          $zipName = "git2base-$VERSION-windows-latest.zip"
+          Compress-Archive -Path dist\git2base.exe -DestinationPath dist\$zipName
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
