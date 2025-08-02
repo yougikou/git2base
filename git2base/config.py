@@ -14,6 +14,18 @@ LOGGER_GIT2BASE = "git2base"
 LOGGER_NO_TECHSTACK = "no_techstack_identified"
 
 
+def get_executable_dir():
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def get_default_config_paths():
+    """Return default config and logger file paths."""
+    base_dir = get_executable_dir()
+    config_path = os.path.join(base_dir, "config.yaml")
+    logger_config_path = os.path.join(base_dir, "logger.yaml")
+    return config_path, logger_config_path
+
+
 def _load_config():
     """Load and cache the configuration file with thread safety and validation
 
@@ -26,9 +38,10 @@ def _load_config():
     """
     global _config_cache, _config_last_modified, _logger_config_loaded
 
+    config_path, logger_config_path = get_default_config_paths()
+
     # Load logger config once if logger.yaml exists
     if not _logger_config_loaded:
-        logger_config_path = "config/logger.yaml"
         if os.path.exists(logger_config_path):
             with open(logger_config_path, "r", encoding="utf-8") as f:
                 logging_config = yaml.safe_load(f)
@@ -49,7 +62,7 @@ def _load_config():
         _logger_config_loaded = True
 
     try:
-        mod_time = os.path.getmtime("config/config.yaml")
+        mod_time = os.path.getmtime(config_path)
     except OSError as e:
         raise RuntimeError(f"Failed to access config file: {str(e)}")
 
@@ -58,7 +71,7 @@ def _load_config():
             return _config_cache
 
         try:
-            with open("config/config.yaml", "r", encoding="utf-8") as file:
+            with open(config_path, "r", encoding="utf-8") as file:
                 config = yaml.safe_load(file)
         except yaml.YAMLError as e:
             raise ValueError(f"Invalid YAML in config: {str(e)}")

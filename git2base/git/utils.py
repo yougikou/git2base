@@ -5,7 +5,7 @@ import pygit2
 from pygit2.repository import Repository
 from typing import cast
 
-from config.config import LOGGER_GIT2BASE, get_logger, load_stacks_config
+from git2base.config import LOGGER_GIT2BASE, get_logger, load_stacks_config
 
 logger = get_logger(LOGGER_GIT2BASE)
 

@@ -5,9 +5,9 @@ from datetime import datetime
 from pygit2.enums import DeltaStatus, DiffOption
 from pygit2.repository import Repository
 
-from config.config import LOGGER_NO_TECHSTACK, get_logger, load_analyzer_config, load_input_config
-from database.model import AnalysisResult, Commit, CommitFile, DiffResult, FileSnapshot
-from git.utils import get_git_file_snapshot, identify_tech_stack
+from git2base.config import LOGGER_NO_TECHSTACK, get_logger, load_analyzer_config, load_input_config
+from git2base.database.model import AnalysisResult, Commit, CommitFile, DiffResult, FileSnapshot
+from git2base.git.utils import get_git_file_snapshot, identify_tech_stack
 
 
 DELTA_STATUS_MAP = {
