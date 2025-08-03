@@ -5,7 +5,7 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 import os
 import sys
 
-from config.config import load_output_config
+from git2base.config import load_output_config
 
 # SQLAlchemy setup
 engine = None

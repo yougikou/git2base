@@ -1,14 +1,9 @@
 from typing import Dict, Any, List
-from analyzers.base_analyzer import BaseAnalyzer, register_analyzer
+from git2base.analyzers import BaseAnalyzer
 
 
 class FileCharCountAnalyzer(BaseAnalyzer):
     """文件字符计数分析器"""
-
-    @classmethod
-    def register(cls):
-        """注册分析器"""
-        register_analyzer("file_char_count", cls)
 
     def get_description(self) -> str:
         return "分析文件中的字符总数"
@@ -33,6 +28,3 @@ class FileCharCountAnalyzer(BaseAnalyzer):
         except Exception:
             return 0, None
 
-
-# 模块加载时自动注册分析器
-FileCharCountAnalyzer.register()

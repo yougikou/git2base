@@ -1,15 +1,9 @@
 from typing import Dict, Any, List
 import xml.etree.ElementTree as ET
-from analyzers.base_analyzer import BaseAnalyzer, register_analyzer
+from git2base.analyzers import BaseAnalyzer
 
 class XMLElementCountAnalyzer(BaseAnalyzer):
     """XML元素计数分析器"""
-    
-    @classmethod
-    def register(cls):
-        """注册分析器"""
-        register_analyzer("xml_element_count", cls)
-
     
     def get_description(self) -> str:
         return "分析XML文件中的元素总数"
@@ -33,6 +27,3 @@ class XMLElementCountAnalyzer(BaseAnalyzer):
             
         except ET.ParseError:
             return 0, None
-
-# 模块加载时自动注册分析器
-XMLElementCountAnalyzer.register()

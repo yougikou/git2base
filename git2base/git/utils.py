@@ -5,7 +5,7 @@ import pygit2
 from pygit2.repository import Repository
 from typing import cast
 
-from config.config import LOGGER_GIT2BASE, get_logger, load_stacks_config
+from git2base.config import LOGGER_GIT2BASE, get_logger, load_stacks_config
 
 logger = get_logger(LOGGER_GIT2BASE)
 
@@ -13,12 +13,6 @@ def is_binary(blob):
     if isinstance(blob, bytes):
         return b"\0" in blob[:1024]
     return False
-
-
-def calculate_file_metrics(file_content):
-    line_count = len(file_content.splitlines())
-    char_length = len(file_content)
-    return char_length, line_count
 
 
 def parse_short_hash(repo, short_hash):

@@ -1,11 +1,9 @@
-from pygit2.repository import Repository
 from sqlalchemy import (
     Column,
     Integer,
     String,
     Text,
     DateTime,
-    ForeignKey,
     JSON,
     inspect,
     text,
@@ -13,8 +11,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.declarative import declarative_base
 
-from database.connection import session_scope
-from git.utils import get_git_file_snapshot
+from git2base.database import session_scope
 
 # SQLAlchemy setup
 Base = declarative_base()
@@ -170,12 +167,6 @@ class CommitFile(Base):
             print(f"检查提交是否存在失败: {str(e)}")
             raise
 
-    def get_file_git_snapshot(self, repo: Repository) -> str:
-        if self.hash is not None:
-            return get_git_file_snapshot(str(self.hash), repo)
-
-        return "<invalid>"
-
     def to_dict(self) -> dict[str, str]:
         return {
             "commit_hash": str(self.commit_hash) if self.commit_hash is not None else "",
@@ -208,18 +199,6 @@ class DiffResult(Base):
     target_file_hash = Column(String(255))
     hunk_char_count = Column(Integer)
     hunk_line_count = Column(Integer)
-
-    def get_base_file_git_snapshot(self, repo: Repository) -> str:
-        if self.hash is not None:
-            return get_git_file_snapshot(str(self.base_file_hash), repo)
-
-        return "<invalid>"
-
-    def get_target_file_git_snapshot(self, repo: Repository) -> str:
-        if self.hash is not None:
-            return get_git_file_snapshot(str(self.target_file_hash), repo)
-
-        return "<invalid>"
 
     def to_dict(self) -> dict[str, str]:
         return {
