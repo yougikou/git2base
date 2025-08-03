@@ -140,16 +140,14 @@ def diff_branch_exec(
     target_branch: str,
     save_snapshot=False,
 ):
-    base_ref = repo.lookup_reference(f"refs/heads/{base_branch}")
-    target_ref = repo.lookup_reference(f"refs/heads/{target_branch}")
-    if not base_ref:
-        raise ValueError(f"分支不存在: {base_branch}")
+    try:
+        base_ref = repo.lookup_reference(f"refs/heads/{base_branch}")
+        target_ref = repo.lookup_reference(f"refs/heads/{target_branch}")
+    except KeyError as e:
+        raise ValueError(f"分支不存在: {str(e)}")
 
-    if not target_ref:
-        raise ValueError(f"分支不存在: {target_branch}")
-
-    base_commit = cast(pygit2.Commit, repo.get(base_ref.target))
-    target_commit = cast(pygit2.Commit, repo.get(target_ref.target))
+    base_commit = cast(pygit2.Commit, repo[base_ref.target])
+    target_commit = cast(pygit2.Commit, repo[target_ref.target])
 
     diff_branch_commit_exec(
         repo,

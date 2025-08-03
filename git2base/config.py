@@ -4,6 +4,7 @@ import yaml
 import os
 import logging.config
 
+
 # Cached configuration with thread safety and validation
 _config_cache = None
 _config_last_modified = 0
@@ -27,6 +28,11 @@ def get_default_config_paths():
     return config_path, logger_config_path
 
 
+def _make_dir(path: str):
+    path_dir = os.path.dirname(path)
+    if path_dir and not os.path.exists(path_dir):
+        os.makedirs(path_dir, exist_ok=True)
+
 def _load_config():
     """Load and cache the configuration file with thread safety and validation
 
@@ -43,24 +49,42 @@ def _load_config():
 
     # Load logger config once if logger.yaml exists
     if not _logger_config_loaded:
-        if os.path.exists(logger_config_path):
-            with open(logger_config_path, "r", encoding="utf-8") as f:
-                logging_config = yaml.safe_load(f)
+        if not os.path.exists(logger_config_path):
+            _make_dir(logger_config_path)
+            try:
+                with open(logger_config_path, "w", encoding="utf-8") as f:
+                    f.write(_LOGGING_CONFIG_TEMPLATE.strip())
+                logging.warning(
+                    f"No logging config yaml found - created new logging config file from template at: {logger_config_path}"
+                )
+            except Exception as e:
+                raise RuntimeError(f"Failed to create logging config file: {str(e)}")
 
-            # Ensure all FileHandler paths have existing directories
-            for handler in logging_config.get("handlers", {}).values():
-                if handler.get("class") == "logging.FileHandler":
-                    log_file = handler.get("filename")
-                    if log_file:
-                        log_dir = os.path.dirname(log_file)
-                        if log_dir and not os.path.exists(log_dir):
-                            os.makedirs(log_dir, exist_ok=True)
+        with open(logger_config_path, "r", encoding="utf-8") as f:
+            logging_config = yaml.safe_load(f)
 
-            # Apply logging configuration
-            logging.config.dictConfig(logging_config)
-        else:
-            logging.basicConfig(level=logging.INFO)
+        # Ensure all FileHandler paths have existing directories
+        for handler in logging_config.get("handlers", {}).values():
+            if handler.get("class") == "logging.FileHandler":
+                log_file = handler.get("filename")
+                if log_file:
+                    _make_dir(log_file)
+
+        # Apply logging configuration
+        logging.config.dictConfig(logging_config)
+
         _logger_config_loaded = True
+
+    if not os.path.exists(config_path):
+        _make_dir(config_path)
+        try:
+            with open(config_path, "w", encoding="utf-8") as f:
+                f.write(_CONFIG_TEMPLATE.strip())
+            logging.warning(
+                f"No config yaml found - created new config file from template at: {config_path}"
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to create config file: {str(e)}")
 
     try:
         mod_time = os.path.getmtime(config_path)
@@ -124,3 +148,111 @@ def load_analyzer_config():
 def get_logger(name: str) -> logging.Logger:
     _load_config()
     return logging.getLogger(name)
+
+
+_CONFIG_TEMPLATE = """# Git2Base 配置文件模板
+input:
+  include: []
+  exclude: [".vscode", "data", "doc"]
+
+output:
+  type: "csv"  # 支持postgresql或sqlite或者csv
+  csv:
+    path: "data"  # 默认为项目的data相对路径
+  postgresql:
+    host: "localhost"
+    port: 5432
+    database: "gitbase"
+    user: "gituser"
+    password: "giko"
+  sqlite:
+    database: "gitbase.db"  # SQLite数据库文件路径 - 默认为项目的根路径
+
+stacks:
+  - name: XML
+    paths: []
+    extensions: ["xml"]
+  - name: Script
+    paths: []
+    extensions: ["sh", "bat"]
+  - name: Python
+    paths: ["config", "database", "git", "notebooks"]
+    extensions: ["py"]
+  - name: PyTest
+    paths: ["tests"]
+    extensions: ["py"]
+  - name: Yaml
+    paths: []
+    extensions: ["yaml"]
+  - name: Jupyter
+    paths: [notebooks]
+    extensions: ["ipynb"]
+
+analyzers:
+  - name: FileLineCount
+    class: "FileLineCountAnalyzer"
+    tech_stacks: ["All"]
+  - name: FileCharCount
+    class: "FileCharCountAnalyzer"
+    tech_stacks: ["All"]
+  - name: XMLElementCount
+    class: "XMLElementCountAnalyzer"
+    tech_stacks: ["XML"]
+"""
+
+_LOGGING_CONFIG_TEMPLATE = """
+version: 1
+disable_existing_loggers: False
+
+formatters:
+  simple:
+    format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    level: INFO
+    formatter: simple
+    stream: ext://sys.stdout
+
+  git2base:
+    class: logging.FileHandler
+    level: DEBUG
+    formatter: simple
+    filename: logs/git2base.log
+    encoding: utf-8
+
+  no_techstack_identified:
+    class: logging.FileHandler
+    level: INFO
+    formatter: simple
+    filename: logs/no_techstack_identified.log
+    encoding: utf-8
+
+  analyzer_test:
+    class: logging.FileHandler
+    level: INFO
+    formatter: simple
+    filename: logs/analyzer_test.log
+    encoding: utf-8
+
+loggers:
+  git2base:
+    level: DEBUG
+    handlers: [console, git2base]
+    propagate: true
+
+  no_techstack_identified:
+    level: INFO
+    handlers: [console, no_techstack_identified]
+    propagate: true
+
+  analyzer_test:
+    level: INFO
+    handlers: [console, analyzer_test]
+    propagate: true
+
+root:
+  level: WARNING
+  handlers: [console]
+"""

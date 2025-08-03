@@ -1,5 +1,5 @@
 input:
-  include: [""]
+  include: []
   exclude: [".vscode", "data", "doc"]
 
 output:
