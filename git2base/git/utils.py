@@ -15,12 +15,6 @@ def is_binary(blob):
     return False
 
 
-def calculate_file_metrics(file_content):
-    line_count = len(file_content.splitlines())
-    char_length = len(file_content)
-    return char_length, line_count
-
-
 def parse_short_hash(repo, short_hash):
     commit = repo.revparse_single(short_hash)
     return str(commit.id)

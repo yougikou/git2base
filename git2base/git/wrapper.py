@@ -19,7 +19,7 @@ from git2base.database import (
     DiffResult,
     FileSnapshot,
 )
-from git2base.git import get_git_file_snapshot, identify_tech_stack
+from git2base.git.utils import get_git_file_snapshot, identify_tech_stack
 
 
 DELTA_STATUS_MAP = {
@@ -50,6 +50,7 @@ def apply_analysis(
     tech_stack: str | None,
 ) -> tuple[FileSnapshot, list[AnalysisResult]]:
     from git2base.database import AnalysisResult
+
     snapshot = get_git_file_snapshot(file_hash, repo) if file_hash else "<invalid>"
     file_snapshot = FileSnapshot(
         commit_file_hash=file_hash,
@@ -71,7 +72,9 @@ def apply_analysis(
         params = analyzer_config.get("params", {})
         AnalyzerClass = ANALYZER_REGISTRY.get(analyzer_config["name"])
         if AnalyzerClass is None:
-            logger.warning(f"Analyzer '{analyzer_config['name']}' not found in registry. Skipping.")
+            logger.warning(
+                f"Analyzer '{analyzer_config['name']}' not found in registry. Skipping."
+            )
             continue
         analyzer = AnalyzerClass(params)
 
