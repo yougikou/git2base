@@ -1,8 +1,8 @@
 import json
 import unittest
-from analyzers.RegexMatchCountAnalyzer import RegexMatchCountAnalyzer
-from analyzers.XMLElementCountAnalyzer import XMLElementCountAnalyzer
-from config.config import get_logger
+from git2base.analyzers import RegexMatchCountAnalyzer
+from git2base.analyzers import XMLElementCountAnalyzer
+from git2base.config import get_logger
 
 logger = get_logger("analyzer_test")
 

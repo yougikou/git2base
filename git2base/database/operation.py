@@ -1,5 +1,11 @@
-from git2base.database.connection import session_scope
-from git2base.database.model import AnalysisResult, Commit, CommitFile, DiffResult, FileSnapshot
+from git2base.database import (
+    session_scope,
+    AnalysisResult,
+    Commit,
+    CommitFile,
+    DiffResult,
+    FileSnapshot,
+)
 
 
 def insert_commits(commits_data: list[Commit]) -> list[Commit]:

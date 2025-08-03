@@ -1,3 +1,4 @@
+import sys
 import threading
 import yaml
 import os
@@ -15,14 +16,14 @@ LOGGER_NO_TECHSTACK = "no_techstack_identified"
 
 
 def get_executable_dir():
-    return os.path.dirname(os.path.abspath(__file__))
+    return os.path.dirname(os.path.abspath(sys.argv[0]))
 
 
 def get_default_config_paths():
     """Return default config and logger file paths."""
     base_dir = get_executable_dir()
-    config_path = os.path.join(base_dir, "config.yaml")
-    logger_config_path = os.path.join(base_dir, "logger.yaml")
+    config_path = os.path.join(base_dir, "config", "config.yaml")
+    logger_config_path = os.path.join(base_dir, "config", "logger.yaml")
     return config_path, logger_config_path
 
 

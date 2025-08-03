@@ -1,14 +1,9 @@
-from typing import Dict, Any, List
-from analyzers.base_analyzer import BaseAnalyzer, register_analyzer
 import re
+from typing import Dict, Any, List
+from git2base.analyzers import BaseAnalyzer
 
 class RegexMatchCountAnalyzer(BaseAnalyzer):
     """正则表达式匹配计数分析器"""
-    
-    @classmethod
-    def register(cls):
-        """注册分析器"""
-        register_analyzer("regex_match_count", cls)
 
     def __init__(self, params: Dict[str, Any]):
         if isinstance(params["patterns"], list):
@@ -68,6 +63,3 @@ class RegexMatchCountAnalyzer(BaseAnalyzer):
                 }
             }
         ]
-
-# 模块加载时自动注册分析器
-RegexMatchCountAnalyzer.register()

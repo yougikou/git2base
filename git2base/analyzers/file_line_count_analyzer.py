@@ -1,14 +1,9 @@
 from typing import Dict, Any, List
-from analyzers.base_analyzer import BaseAnalyzer, register_analyzer
+from git2base.analyzers import BaseAnalyzer
 
 
 class FileLineCountAnalyzer(BaseAnalyzer):
     """文件行数分析器"""
-
-    @classmethod
-    def register(cls):
-        """注册分析器"""
-        register_analyzer("file_line_count", cls)
 
     def get_description(self) -> str:
         return "分析文件中的行数"
@@ -32,7 +27,3 @@ class FileLineCountAnalyzer(BaseAnalyzer):
 
         except Exception:
             return 0, None
-
-
-# 模块加载时自动注册分析器
-FileLineCountAnalyzer.register()

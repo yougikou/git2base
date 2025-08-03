@@ -13,8 +13,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.declarative import declarative_base
 
-from git2base.database.connection import session_scope
-from git2base.git.utils import get_git_file_snapshot
+from git2base.database import session_scope
+from git2base.git import get_git_file_snapshot
 
 # SQLAlchemy setup
 Base = declarative_base()

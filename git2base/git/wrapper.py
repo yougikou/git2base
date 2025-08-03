@@ -1,13 +1,25 @@
-import importlib
 import os
 import pygit2
 from datetime import datetime
 from pygit2.enums import DeltaStatus, DiffOption
 from pygit2.repository import Repository
 
-from git2base.config import LOGGER_NO_TECHSTACK, get_logger, load_analyzer_config, load_input_config
-from git2base.database.model import AnalysisResult, Commit, CommitFile, DiffResult, FileSnapshot
-from git2base.git.utils import get_git_file_snapshot, identify_tech_stack
+
+from git2base.analyzers import ANALYZER_REGISTRY
+from git2base.config import (
+    LOGGER_NO_TECHSTACK,
+    get_logger,
+    load_analyzer_config,
+    load_input_config,
+)
+from git2base.database import (
+    AnalysisResult,
+    Commit,
+    CommitFile,
+    DiffResult,
+    FileSnapshot,
+)
+from git2base.git import get_git_file_snapshot, identify_tech_stack
 
 
 DELTA_STATUS_MAP = {
@@ -25,37 +37,9 @@ DELTA_STATUS_MAP = {
 }
 
 logger = get_logger(LOGGER_NO_TECHSTACK)
-
-
-def _load_analyzers(analyzers):
-    """加载分析器类
-
-    Args:
-        analyzers: 分析器配置列表
-
-    Returns:
-        dict: 已加载的分析器类字典
-
-    Raises:
-        ImportError: 如果无法加载分析器
-    """
-    loaded_analyzers = {}
-    for analyzer_config in analyzers:
-        class_name = analyzer_config["class"]
-        module_name = f"analyzers.{class_name}"
-        try:
-            module = importlib.import_module(module_name)
-            analyzer_class = getattr(module, class_name)
-            loaded_analyzers[class_name] = analyzer_class
-        except (ImportError, AttributeError) as e:
-            raise ImportError(f"Failed to load {class_name} from {module_name}: {e}")
-    return loaded_analyzers
-
-
 include_paths = load_input_config()["include"]
 exclude_paths = load_input_config()["exclude"]
-analyzers = load_analyzer_config()
-loadedAnalyzers = _load_analyzers(analyzers) if analyzers else {}
+analyzers_config = load_analyzer_config()
 
 
 def apply_analysis(
@@ -65,6 +49,7 @@ def apply_analysis(
     file_hash: str | None,
     tech_stack: str | None,
 ) -> tuple[FileSnapshot, list[AnalysisResult]]:
+    from git2base.database import AnalysisResult
     snapshot = get_git_file_snapshot(file_hash, repo) if file_hash else "<invalid>"
     file_snapshot = FileSnapshot(
         commit_file_hash=file_hash,
@@ -76,16 +61,19 @@ def apply_analysis(
         return file_snapshot, []
 
     results = []
-    for analyzer_config in analyzers:
+    for analyzer_config in analyzers_config:
         if (
             tech_stack not in analyzer_config["tech_stacks"]
             and "All" not in analyzer_config["tech_stacks"]
         ):
             continue
 
-        analyzer_class = loadedAnalyzers[analyzer_config["class"]]
-        params = analyzer_config.get("params", None)
-        analyzer = analyzer_class(params or {})
+        params = analyzer_config.get("params", {})
+        AnalyzerClass = ANALYZER_REGISTRY.get(analyzer_config["name"])
+        if AnalyzerClass is None:
+            logger.warning(f"Analyzer '{analyzer_config['name']}' not found in registry. Skipping.")
+            continue
+        analyzer = AnalyzerClass(params)
 
         if snapshot and snapshot not in [
             "<invalid>",

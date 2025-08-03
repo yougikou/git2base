@@ -8,17 +8,23 @@ from tqdm import tqdm
 from typing import cast
 
 
-from git2base.database.connection import init_output
-from git2base.database.model import create_tables, reset_tables
-from git2base.database.operation import (
+from git2base.analyzers import load_and_register_analyzers
+from git2base.database import (
+    init_output,
+    create_tables,
+    reset_tables,
     insert_analysis_results,
     insert_commits,
     insert_commit_files,
     insert_diff_results,
     insert_file_snapshot,
 )
-from git2base.git.utils import parse_short_hash, write_csv
-from git2base.git.wrapper import SnapshotAnalysisWrapper, DiffAnalysisWrapper
+from git2base.git import (
+    SnapshotAnalysisWrapper,
+    DiffAnalysisWrapper,
+    parse_short_hash,
+    write_csv,
+)
 from git2base.config import LOGGER_GIT2BASE, get_logger, load_output_config
 
 
@@ -366,6 +372,8 @@ def main():
     engine = init_output(mode)
     if engine:
         create_tables(engine)
+
+    load_and_register_analyzers()
 
     if mode == "snapshot":
         commit_exec(repo, branch, base)

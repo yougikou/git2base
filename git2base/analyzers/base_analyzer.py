@@ -1,30 +1,35 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Type
+from typing import Dict, Any, List
 import importlib
 
+from git2base.config import load_analyzer_config
+
 # 分析器注册表
-_ANALYZER_REGISTRY = {}
+ANALYZER_REGISTRY = {}
 
 
-def register_analyzer(name: str, analyzer_class: Type["BaseAnalyzer"]):
-    """注册分析器类"""
-    _ANALYZER_REGISTRY[name] = analyzer_class
+def load_and_register_analyzers():
+    user_module = None
+    try:
+        user_module = importlib.import_module("user_analyzers")
+    except Exception as e:
+        print(f"Warn: module user_analyzers load failed: {e} - only build-in analyzers will be loaded")
 
+    analyzers_config = load_analyzer_config()
+    for cfg in analyzers_config:
+        class_name = cfg["class"]
+        analyzer_name = cfg["name"]
 
-def get_analyzer(name: str, params: Dict[str, Any]) -> "BaseAnalyzer":
-    """获取分析器实例"""
-    if name not in _ANALYZER_REGISTRY:
-        # 尝试动态加载模块
-        module_name = f"analyzers.{name}"
         try:
-            importlib.import_module(module_name)
-        except ImportError:
-            raise ValueError(f"无法找到分析器: {name}")
-
-    if name not in _ANALYZER_REGISTRY:
-        raise ValueError(f"分析器 {name} 未注册")
-
-    return _ANALYZER_REGISTRY[name](params)
+            if ANALYZER_REGISTRY.get(analyzer_name, None):
+                continue
+            module = importlib.import_module(f"git2base.analyzers")
+            analyzer_class = getattr(module, class_name)
+            if not analyzer_class and user_module:
+                analyzer_class = getattr(user_module, class_name)
+            ANALYZER_REGISTRY[analyzer_name] = analyzer_class
+        except Exception as e:
+            print(f"Analyzer {analyzer_name} load failed: {e}")
 
 
 class BaseAnalyzer(ABC):
