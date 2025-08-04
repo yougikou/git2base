@@ -18,6 +18,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Show current path
+        run: pwd
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -33,7 +36,7 @@ jobs:
         run: pip install pyinstaller
 
       - name: Build executable with PyInstaller
-        run: pyinstaller main.py --onefile --name git2base
+        run: pyinstaller --onefile git2base.spec
         shell: bash
 
       - name: Zip output with version (Linux/macOS)
