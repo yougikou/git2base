@@ -36,7 +36,7 @@ jobs:
         run: pip install pyinstaller
 
       - name: Build executable with PyInstaller
-        run: pyinstaller --onefile git2base.spec
+        run: pyinstaller git2base.spec
         shell: bash
 
       - name: Zip output with version (Linux/macOS)
