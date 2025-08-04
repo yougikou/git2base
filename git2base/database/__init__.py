@@ -3,8 +3,8 @@ Database package for git2base.
 Provides database connection and operations.
 """
 
-from .connection import init_output, session_scope
-from .model import (
+from git2base.database.connection import init_output, session_scope
+from git2base.database.model import (
     create_tables,
     reset_tables,
     Commit,
@@ -13,7 +13,7 @@ from .model import (
     AnalysisResult,
     FileSnapshot,
 )
-from .operation import (
+from git2base.database.operation import (
     insert_commits,
     insert_commit_files,
     insert_diff_results,
