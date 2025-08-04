@@ -33,7 +33,7 @@ jobs:
         run: pip install pyinstaller
 
       - name: Build executable with PyInstaller
-        run: pyinstaller main.py --onefile --name git2base
+        run: pyinstaller main.py --onefile --name git2base --collect-submodules=git2base.analyzers --collect-submodules=git2base.database  --collect-submodules=git2base.git
         shell: bash
 
       - name: Zip output with version (Linux/macOS)
