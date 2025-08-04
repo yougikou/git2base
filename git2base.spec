@@ -1,24 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
+from PyInstaller.utils.hooks import collect_submodules
+
 block_cipher = None
+
+# Collect every module under the git2base package so dynamically
+# imported analyzers and helpers are bundled into the executable.
+hiddenimports = collect_submodules('git2base')
 
 a = Analysis(
     ['main.py'],
     pathex=[os.path.abspath('.')],
     binaries=[],
     datas=[],
-    hiddenimports=[
-        'git2base.database.connection',
-        'git2base.database.model',
-        'git2base.database.operation',
-        'git2base.git.utils',
-        'git2base.git.wrapper',
-        'git2base.analyzers.base_analyzer',
-        'git2base.analyzers.file_char_count_analyzer',
-        'git2base.analyzers.file_line_count_analyzer',
-        'git2base.analyzers.regex_match_count_analyzer',
-        'git2base.analyzers.xml_elm_count_analyzer'
-    ],
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
