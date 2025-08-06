@@ -1,4 +1,4 @@
-name: Build Executables
+name: Build with Nuitka
 
 on:
   workflow_dispatch: 
@@ -8,12 +8,10 @@ on:
 
 jobs:
   build:
-    name: Build on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -30,13 +28,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install nuitka
         shell: bash
 
-      - name: Install PyInstaller
-        run: pip install pyinstaller
-
-      - name: Build executable with PyInstaller
-        run: pyinstaller git2base.spec
+      - name: Build with Nuitka
+        run: |
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            python -m nuitka --standalone --onefile --windows-icon-from-ico=icon.ico --output-dir=dist --output-filename=git2base --include-package=pygit2 --include-module=_cffi_backend --follow-imports main.py
+          else
+            python -m nuitka --standalone --onefile --output-dir=dist --output-filename=git2base --include-package=pygit2 --include-module=_cffi_backend --follow-imports main.py
+          fi
         shell: bash
 
       - name: Zip output with version (Linux/macOS)
