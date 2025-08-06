@@ -34,7 +34,7 @@ jobs:
       - name: Build with Nuitka
         run: |
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            python -m nuitka --standalone --onefile --windows-icon-from-ico=icon.ico --output-dir=dist --output-filename=git2base --include-package=pygit2 --include-module=_cffi_backend --follow-imports main.py
+            python -m nuitka --standalone --onefile --output-dir=dist --output-filename=git2base --include-package=pygit2 --include-module=_cffi_backend --follow-imports main.py
           else
             python -m nuitka --standalone --onefile --output-dir=dist --output-filename=git2base --include-package=pygit2 --include-module=_cffi_backend --follow-imports main.py
           fi
