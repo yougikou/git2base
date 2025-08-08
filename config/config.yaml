@@ -44,7 +44,7 @@ stacks:
     paths: []
     extensions: ["sh", "bat"]
   - name: Python
-    paths: ["config", "database", "git", "notebooks"]
+    paths: ["config", "database", "git", "notebooks", "analyzers"]
     extensions: ["py"]
   - name: PyTest
     paths: ["tests"]

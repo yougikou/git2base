@@ -12,7 +12,7 @@ engine = None
 Session = None
 
 
-def init_output(mode = None) -> Engine | None:
+def init_output(mode = None, name = None) -> Engine | None:
     """Initialize SQLAlchemy database connection"""
     global engine, Session
 
@@ -24,7 +24,7 @@ def init_output(mode = None) -> Engine | None:
             return None
 
         # 获取当前时间戳
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
 
         # 获取 repo 参数：支持 --repo= 和 --repo /path/to/repo 两种方式
         try:
@@ -36,7 +36,10 @@ def init_output(mode = None) -> Engine | None:
                 raise ValueError("No --repo argument found")
         except Exception:
             repo_name = "unknown"
-        output_dir = os.path.join(config["csv"]["path"], repo_name, f"{mode}_{timestamp}")
+        if name:
+            output_dir = os.path.join(config["csv"]["path"], repo_name, f"{mode}_{name}_{timestamp}")
+        else:
+            output_dir = os.path.join(config["csv"]["path"], repo_name, f"{mode}_{timestamp}")
         os.makedirs(output_dir, exist_ok=True)
 
         # 更新 config 中的 csv path 为新目录
@@ -56,7 +59,7 @@ def init_output(mode = None) -> Engine | None:
             connect_args={"check_same_thread": False},
         )
     else:
-        print(f"Unsupport output setting: {config["type"]}")
+        print(f"Unsupport output setting: {config['type']}")
 
     Session = scoped_session(sessionmaker(bind=engine))
 

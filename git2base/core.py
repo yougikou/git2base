@@ -290,23 +290,23 @@ def resolve_branch_and_commits(args, repo):
         logger.info(
             f"Without specifying a mode or commit, get the latest commit of {args.branch}: {latest_commit_hash}, executed in snapshot mode"
         )
-        return "snapshot", args.branch, latest_commit_hash, ""
+        return "snap", args.name, args.branch, latest_commit_hash, ""
 
     if args.branch and args.snapshot:
         snapshot_commit_hash = parse_short_hash(repo, args.snapshot)
-        return "snapshot", args.branch, snapshot_commit_hash, ""
+        return "snap", args.name, args.branch, snapshot_commit_hash, ""
 
     if args.branch and args.history:
         history_commit_hash = parse_short_hash(repo, args.history)
-        return "history", args.branch, history_commit_hash, ""
+        return "hist", args.name, args.branch, history_commit_hash, ""
 
     if args.branch and args.diff:
         base_commit_hash = parse_short_hash(repo, args.diff[0])
         target_commit_hash = parse_short_hash(repo, args.diff[1])
-        return "diff", args.branch, base_commit_hash, target_commit_hash
+        return "diff", args.name, args.branch, base_commit_hash, target_commit_hash
 
     if args.diff_branch:
-        return "diff_branch", "", args.diff_branch[0], args.diff_branch[1]
+        return "diffb", args.name, "", args.diff_branch[0], args.diff_branch[1]
 
     logger.error("Error: No valid command arguments were provided")
     sys.exit(1)
@@ -320,6 +320,11 @@ def main():
         "--branch",
         type=str,
         help="Specify the branch. If not provided, the current checkout branch will be used.",
+    )
+    parser.add_argument(
+        "--name",
+        type=str,
+        help="Specify the name of the analysis task",
     )
     parser.add_argument(
         "--snapshot",
@@ -366,18 +371,18 @@ def main():
 
     validate_args(args)
     repo = Repository(args.repo)
-    mode, branch, base, target = resolve_branch_and_commits(args, repo)
-    engine = init_output(mode)
+    mode, name, branch, base, target = resolve_branch_and_commits(args, repo)
+    engine = init_output(mode, name)
     if engine:
         create_tables(engine)
 
     load_and_register_analyzers()
 
-    if mode == "snapshot":
+    if mode == "snap":
         commit_exec(repo, branch, base)
-    elif mode == "history":
+    elif mode == "hist":
         commit_exec(repo, branch, base)
     elif mode == "diff":
         diff_commit_exec(repo, branch, base, target)
-    elif mode == "diff_branch":
+    elif mode == "diffb":
         diff_branch_exec(repo, base, target)
