@@ -2,9 +2,11 @@ ipywidgets
 jupyter
 matplotlib
 pandas
+panel
 psycopg2-binary
 pygit2
 pyyaml
 seaborn
 sqlalchemy
 tqdm
+watchfiles

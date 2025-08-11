@@ -204,6 +204,12 @@ python -m unittest tests/test_analyzers.py -v
 在Git工具中使用命令行配置快捷命令可以达到通过图形界面的使用目的。因此本工具对于数据收集部分不打算提供图形界面的支持。
 
 
+
+
+
+
+
+
 ## 贡献指南
 
 1. Fork 本仓库
@@ -211,3 +217,24 @@ python -m unittest tests/test_analyzers.py -v
 3. 提交Pull Request
 
 请确保所有代码遵循PEP 8风格指南。
+
+
+## 分析数据/统计资源的目录结构约定
+```bash
+(root)
+artifacts/
+├── <project_id>
+│   ├── project.json
+│   └── runs
+│       └── <run_id>
+│           ├── metrics
+│           │   ├── metrics.csv
+│           │   ├── items.csv
+│           │   ├── charts/
+│           │   └── manifest.json
+│           ├── data
+│           │   ├── analysis_result.csv
+│           │   ├── commits.csv
+│           │   └── diff_result.csv
+│           └── run.json（本次执行元信息）
+└── README.md

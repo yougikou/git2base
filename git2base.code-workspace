@@ -14,6 +14,12 @@
 				"name": "gitbase",
 				"database": "gitbase",
 				"username": "gituser"
+			},
+			{
+				"previewLimit": 50,
+				"driver": "SQLite",
+				"database": "E:\\develop\\git2base-one-file\\gitbase.db",
+				"name": "ONE"
 			}
 		]
 	}
