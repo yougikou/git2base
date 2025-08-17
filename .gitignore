@@ -160,8 +160,8 @@ cython_debug/
 #.idea/
 .DS_Store
 gitbase.db
-data/*
-!data/.gitkeep
+artifacts/*
+!artifacts/.gitkeep
 notebooks/output/*
 !notebooks/output/.gitkeep
 main.dist/*

@@ -6,12 +6,13 @@ from pygit2.repository import Repository
 from sqlalchemy.exc import IntegrityError
 from tqdm import tqdm
 from typing import cast
-
+import os, json
+from datetime import datetime, timezone
+from typing import Protocol, Callable
 
 from git2base.analyzers import load_and_register_analyzers
 from git2base.database import (
     init_output,
-    create_tables,
     reset_tables,
     insert_analysis_results,
     insert_commits,
@@ -30,6 +31,111 @@ from git2base.config import LOGGER_GIT2BASE, get_logger, load_output_config
 
 output_config = load_output_config()
 logger = get_logger(LOGGER_GIT2BASE)
+
+
+class RunMetaPlugin(Protocol):
+    def prepare_run(
+        self,
+        *,
+        artifacts_root: str,
+        project: str,
+        mode: str,
+        branch: str,
+        base: str,
+        target: str,
+        repo_path: str,
+    ) -> str: ...
+
+
+def _ensure_dir(p: str):
+    os.makedirs(p, exist_ok=True)
+
+
+def _atomic_write_json(path: str, obj: dict):
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
+def _load_projects_json(project_dir: str) -> dict:
+    pj = os.path.join(project_dir, "project.json")
+    if os.path.exists(pj):
+        with open(pj, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def default_prepare_run(
+    *,
+    artifacts_root: str,
+    project: str,
+    mode: str,
+    branch: str,
+    base: str,
+    target: str,
+    repo_path: str,
+) -> str:
+    # run_id: YYYYMMDD-HHMMSS-<short>
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    short = (target or base or "run")[:4]
+    run_id = f"{ts}-{short}"
+    project_dir = os.path.join(artifacts_root, project)
+    runs_dir = os.path.join(project_dir, "runs")
+    run_dir = os.path.join(runs_dir, run_id)
+    data_dir = os.path.join(run_dir, "data")
+    # metrics_dir = os.path.join(run_dir, "metrics")
+    # charts_dir = os.path.join(metrics_dir, "charts")
+    for d in (project_dir, runs_dir, run_dir, data_dir):
+        _ensure_dir(d)
+
+    # project.json upsert (minimal fields)
+    project_json = _load_projects_json(project_dir)
+    project_json.setdefault("schema_version", "1.0")
+    project_json.setdefault("id", project)
+    project_json.setdefault("title", project)
+    project_json["latest_run"] = run_id
+    project_json["updated_at"] = (
+        datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
+    )
+    runs_list = project_json.setdefault("runs", [])
+    runs_list.append(
+        {
+            "run_id": run_id,
+            "run_type": ("snapshot" if mode == "snap" or mode == "hist" else "diff"),
+            "scope_key": (
+                base if (mode == "snap" or mode == "hist") else f"{base}..{target}"
+            ),
+            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds")
+            + "Z",
+        }
+    )
+    _atomic_write_json(os.path.join(project_dir, "project.json"), project_json)
+
+    # run.json skeleton (metrics_files can be filled by dashboard/aggregator later)
+    run_json = {
+        "schema_version": "1.0",
+        "project_id": project,
+        "run_id": run_id,
+        "run_type": ("snapshot" if mode == "snap" or mode == "hist" else "diff"),
+        "scope_type": ("snapshot" if mode == "snap" or mode == "hist" else "diff"),
+        "scope_key": (
+            base if (mode == "snap" or mode == "hist") else f"{base}..{target}"
+        ),
+        "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z",
+    }
+    _atomic_write_json(os.path.join(run_dir, "run.json"), run_json)
+    return run_dir
+
+
+def load_runmeta_plugin() -> Callable[..., str]:
+    # ENV override: module:function
+    spec = os.environ.get("GIT2BASE_RUNMETA_PLUGIN")
+    if spec:
+        mod, func = spec.split(":", 1)
+        m = __import__(mod, fromlist=[func])
+        return getattr(m, func)
+    return default_prepare_run
 
 
 def commit_exec(
@@ -69,17 +175,22 @@ def commit_exec(
     commit_data = snapshot_wrapped.get_db_commit()
     commit_files_data = snapshot_wrapped.get_db_commit_files()
 
+    # TODO
+    csv_base = ""
+    if not csv_base:
+        csv_base = "."
+
     if output_config["type"] == "csv":
         logger.debug("Write commit data")
         write_csv(
             [commit_data.to_dict()],
-            f"{output_config['csv']['path']}/commits.csv",
+            os.path.join(csv_base, "commits.csv"),
             False,
         )
         logger.debug("Write commit file data")
         write_csv(
             [f.to_dict() for f in commit_files_data],
-            f"{output_config['csv']['path']}/commit_files.csv",
+            os.path.join(csv_base, "commit_files.csv"),
             False,
         )
     else:
@@ -111,7 +222,7 @@ def commit_exec(
                 logger.debug(f"Write analysis results of file {file.path}")
                 write_csv(
                     rows,
-                    f"{output_config['csv']['path']}/analysis_results.csv",
+                    os.path.join(csv_base, "analysis_results.csv"),
                     append_mode,
                 )
                 if rows:
@@ -187,17 +298,23 @@ def diff_branch_commit_exec(
     )
     commits_data = diff_wrapped.get_db_commits()
     diff_results_data = diff_wrapped.get_db_diff_results()
+
+    # TODO 
+    csv_base = ""
+    if not csv_base:
+        csv_base = "."
+
     if output_config["type"] == "csv":
         logger.debug("Write commit data")
         write_csv(
             [f.to_dict() for f in commits_data],
-            f"{output_config['csv']['path']}/commits.csv",
+            os.path.join(csv_base, "commits.csv"),
             False,
         )
         logger.debug("Write diff results data")
         write_csv(
             [f.to_dict() for f in diff_results_data],
-            f"{output_config['csv']['path']}/diff_results.csv",
+            os.path.join(csv_base, "diff_results.csv"),
             False,
         )
     else:
@@ -235,7 +352,7 @@ def diff_branch_commit_exec(
                 )
                 write_csv(
                     rows,
-                    f"{output_config['csv']['path']}/analysis_results.csv",
+                    os.path.join(csv_base, "analysis_results.csv"),
                     append_mode,
                 )
                 if rows:
@@ -284,29 +401,35 @@ def resolve_branch_and_commits(args, repo):
             f"No branch is specified, use the branch of the current checkout: {args.branch}"
         )
 
+    if not args.project:
+        args.project = os.path.basename(os.path.normpath(repo.workdir))
+        logger.info(
+            f"No project is specified, use the root folder name as project name: {args.project}"
+        )
+
     # 如果指定了分支但没有指定提交哈希或指定比较提交哈希，则获取该分支的最新提交
     if args.branch and not args.snapshot and not args.history and not args.diff:
         latest_commit_hash = str(repo.branches[args.branch].target)
         logger.info(
             f"Without specifying a mode or commit, get the latest commit of {args.branch}: {latest_commit_hash}, executed in snapshot mode"
         )
-        return "snap", args.name, args.branch, latest_commit_hash, ""
+        return "snap", args.project, args.branch, latest_commit_hash, ""
 
     if args.branch and args.snapshot:
         snapshot_commit_hash = parse_short_hash(repo, args.snapshot)
-        return "snap", args.name, args.branch, snapshot_commit_hash, ""
+        return "snap", args.project, args.branch, snapshot_commit_hash, ""
 
     if args.branch and args.history:
         history_commit_hash = parse_short_hash(repo, args.history)
-        return "hist", args.name, args.branch, history_commit_hash, ""
+        return "hist", args.project, args.branch, history_commit_hash, ""
 
     if args.branch and args.diff:
         base_commit_hash = parse_short_hash(repo, args.diff[0])
         target_commit_hash = parse_short_hash(repo, args.diff[1])
-        return "diff", args.name, args.branch, base_commit_hash, target_commit_hash
+        return "diff", args.project, args.branch, base_commit_hash, target_commit_hash
 
     if args.diff_branch:
-        return "diffb", args.name, "", args.diff_branch[0], args.diff_branch[1]
+        return "diffb", args.project, "", args.diff_branch[0], args.diff_branch[1]
 
     logger.error("Error: No valid command arguments were provided")
     sys.exit(1)
@@ -322,9 +445,9 @@ def main():
         help="Specify the branch. If not provided, the current checkout branch will be used.",
     )
     parser.add_argument(
-        "--name",
+        "--project",
         type=str,
-        help="Specify the name of the analysis task",
+        help="Specify the project name of the analysis task",
     )
     parser.add_argument(
         "--snapshot",
@@ -371,10 +494,28 @@ def main():
 
     validate_args(args)
     repo = Repository(args.repo)
-    mode, name, branch, base, target = resolve_branch_and_commits(args, repo)
-    engine = init_output(mode, name)
-    if engine:
-        create_tables(engine)
+    mode, project, branch, base, target = resolve_branch_and_commits(args, repo)
+
+    cfg = load_output_config()
+    artifacts_root = (
+        cfg.get("artifacts_root")
+        or cfg.get("csv", {}).get("path")
+        or os.path.join(os.getcwd(), "artifacts")
+    )
+
+    prep = load_runmeta_plugin()
+    repo_path = args.repo
+    run_dir = prep(
+        artifacts_root=artifacts_root,
+        project=project,
+        mode=mode,
+        branch=branch or "",
+        base=base or "",
+        target=target or "",
+        repo_path=repo_path,
+    )
+
+    init_output(mode, project, run_dir)
 
     load_and_register_analyzers()
 

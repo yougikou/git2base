@@ -5,7 +5,7 @@ input:
 output:
   type: "csv"  # 支持postgresql或sqlite或者csv
   csv:
-    path: "data"  # 默认为项目的data相对路径
+    path: "artifacts"  # 默认为项目的artifacts相对路径
   postgresql:
     host: "localhost"
     port: 5432

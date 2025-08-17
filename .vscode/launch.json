@@ -39,7 +39,7 @@
       "args": [
         "--repo", "./",
         "--name", "release1-base",
-        "--diff-branch", "main", "feature/add-jupyter-support"
+        "--diffb", "main", "feature/add-jupyter-support"
       ]
     }
   ]
