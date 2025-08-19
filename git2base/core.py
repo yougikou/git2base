@@ -31,6 +31,7 @@ from git2base.config import LOGGER_GIT2BASE, get_logger, load_output_config
 
 output_config = load_output_config()
 logger = get_logger(LOGGER_GIT2BASE)
+run_dir_data: str | None = None
 
 
 class RunMetaPlugin(Protocol):
@@ -76,10 +77,10 @@ def default_prepare_run(
     target: str,
     repo_path: str,
 ) -> str:
-    # run_id: YYYYMMDD-HHMMSS-<short>
+    # run_id: Mode_YYYYMMDD-HHMMSS-<shorthash>
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    short = (target or base or "run")[:4]
-    run_id = f"{ts}-{short}"
+    short = (target or base or "run")[:7]
+    run_id = f"{mode}_{ts}-{short}"
     project_dir = os.path.join(artifacts_root, project)
     runs_dir = os.path.join(project_dir, "runs")
     run_dir = os.path.join(runs_dir, run_id)
@@ -175,22 +176,23 @@ def commit_exec(
     commit_data = snapshot_wrapped.get_db_commit()
     commit_files_data = snapshot_wrapped.get_db_commit_files()
 
-    # TODO
-    csv_base = ""
-    if not csv_base:
-        csv_base = "."
+    # Resolve CSV base path to current run's data directory when in CSV mode
+    if not run_dir_data:
+        raise RuntimeError(
+            "Run directory data path is not initialized. Please call init_output() first."
+        )
 
     if output_config["type"] == "csv":
         logger.debug("Write commit data")
         write_csv(
             [commit_data.to_dict()],
-            os.path.join(csv_base, "commits.csv"),
+            os.path.join(run_dir_data, "commits.csv"),
             False,
         )
         logger.debug("Write commit file data")
         write_csv(
             [f.to_dict() for f in commit_files_data],
-            os.path.join(csv_base, "commit_files.csv"),
+            os.path.join(run_dir_data, "commit_files.csv"),
             False,
         )
     else:
@@ -222,7 +224,7 @@ def commit_exec(
                 logger.debug(f"Write analysis results of file {file.path}")
                 write_csv(
                     rows,
-                    os.path.join(csv_base, "analysis_results.csv"),
+                    os.path.join(run_dir_data, "analysis_results.csv"),
                     append_mode,
                 )
                 if rows:
@@ -299,22 +301,23 @@ def diff_branch_commit_exec(
     commits_data = diff_wrapped.get_db_commits()
     diff_results_data = diff_wrapped.get_db_diff_results()
 
-    # TODO 
-    csv_base = ""
-    if not csv_base:
-        csv_base = "."
+    # Resolve CSV base path to current run's data directory when in CSV mode
+    if not run_dir_data:
+        raise RuntimeError(
+            "Run directory data path is not initialized. Please call init_output() first."
+        )
 
     if output_config["type"] == "csv":
         logger.debug("Write commit data")
         write_csv(
             [f.to_dict() for f in commits_data],
-            os.path.join(csv_base, "commits.csv"),
+            os.path.join(run_dir_data, "commits.csv"),
             False,
         )
         logger.debug("Write diff results data")
         write_csv(
             [f.to_dict() for f in diff_results_data],
-            os.path.join(csv_base, "diff_results.csv"),
+            os.path.join(run_dir_data, "diff_results.csv"),
             False,
         )
     else:
@@ -352,7 +355,7 @@ def diff_branch_commit_exec(
                 )
                 write_csv(
                     rows,
-                    os.path.join(csv_base, "analysis_results.csv"),
+                    os.path.join(run_dir_data, "analysis_results.csv"),
                     append_mode,
                 )
                 if rows:
@@ -373,6 +376,65 @@ def diff_branch_commit_exec(
             pbar.refresh()
 
     logger.info("All files analyzed and processed")
+
+
+def _finalize_run_metadata(run_dir: str):
+    """Finalize metadata after a successful run.
+
+    - Adds status and end timestamp to run.json
+    - Lists produced CSV files under data/
+    - Updates the matching run record in project.json with completion info
+    """
+    try:
+        data_dir = os.path.join(run_dir, "data")
+        data_files = []
+        if os.path.isdir(data_dir):
+            for name in sorted(os.listdir(data_dir)):
+                if name.lower().endswith(".csv"):
+                    data_files.append(os.path.join("data", name))
+
+        # Update run.json
+        run_json_path = os.path.join(run_dir, "run.json")
+        if os.path.exists(run_json_path):
+            with open(run_json_path, "r", encoding="utf-8") as f:
+                run_json = json.load(f)
+        else:
+            run_json = {}
+
+        run_json["status"] = "success"
+        run_json["ended_at"] = (
+            datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
+        )
+        run_json["data_files"] = data_files
+        _atomic_write_json(run_json_path, run_json)
+
+        # Update project.json entry for this run
+        project_dir = os.path.dirname(os.path.dirname(run_dir))
+        project_json_path = os.path.join(project_dir, "project.json")
+        if os.path.exists(project_json_path):
+            with open(project_json_path, "r", encoding="utf-8") as f:
+                project_json = json.load(f)
+        else:
+            project_json = {}
+
+        runs = project_json.get("runs", [])
+        # Find the run by id
+        run_id = os.path.basename(run_dir)
+        for r in runs:
+            if r.get("run_id") == run_id:
+                r["status"] = "success"
+                r["completed_at"] = (
+                    datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
+                )
+                break
+        project_json["runs"] = runs
+        project_json["latest_run"] = run_id
+        project_json["updated_at"] = (
+            datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
+        )
+        _atomic_write_json(project_json_path, project_json)
+    except Exception as e:
+        logger.error(f"Failed to finalize run metadata: {e}")
 
 
 def validate_args(args):
@@ -496,12 +558,10 @@ def main():
     repo = Repository(args.repo)
     mode, project, branch, base, target = resolve_branch_and_commits(args, repo)
 
-    cfg = load_output_config()
-    artifacts_root = (
-        cfg.get("artifacts_root")
-        or cfg.get("csv", {}).get("path")
-        or os.path.join(os.getcwd(), "artifacts")
-    )
+    csv_cfg = output_config.get("csv") or {}
+    artifacts_root = csv_cfg.get("path") if isinstance(csv_cfg, dict) else None
+    if not artifacts_root:
+        artifacts_root = os.path.join(repo.workdir, "artifacts")
 
     prep = load_runmeta_plugin()
     repo_path = args.repo
@@ -515,7 +575,9 @@ def main():
         repo_path=repo_path,
     )
 
-    init_output(mode, project, run_dir)
+    global run_dir_data
+    run_dir_data = os.path.join(run_dir, "data")
+    init_output(mode, run_dir_data)
 
     load_and_register_analyzers()
 
@@ -527,3 +589,7 @@ def main():
         diff_commit_exec(repo, branch, base, target)
     elif mode == "diffb":
         diff_branch_exec(repo, base, target)
+
+    # Finalize metadata once processing succeeds
+    if run_dir:
+        _finalize_run_metadata(run_dir)

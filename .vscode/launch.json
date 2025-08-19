@@ -13,7 +13,6 @@
       "args": [
         "--repo", "./",
         "--branch", "main",
-        // "--name", "release1",
         "--snapshot", "c92f3b65d993b0fa7deae97fc61770738d6f9176",
       ]
     },
@@ -26,7 +25,6 @@
       "args": [
         "--repo", "./",
         "--branch", "main",
-        "--name", "release1-2",
         "--diff", "6685bcdb3c3376fd788fc04c78cef3ffdbaa795d", "c92f3b65d993b0fa7deae97fc61770738d6f9176",
       ]
     },
