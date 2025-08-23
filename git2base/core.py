@@ -8,7 +8,7 @@ from tqdm import tqdm
 from typing import cast
 import os, json
 from datetime import datetime, timezone
-from typing import Protocol, Callable
+from typing import Protocol, Callable, Any
 
 from git2base.analyzers import load_and_register_analyzers
 from git2base.database import (
@@ -26,7 +26,12 @@ from git2base.git import (
     parse_short_hash,
     write_csv,
 )
-from git2base.config import LOGGER_GIT2BASE, get_logger, load_output_config
+from git2base.config import (
+    LOGGER_GIT2BASE,
+    get_logger,
+    load_output_config,
+    get_executable_dir,
+)
 
 
 output_config = load_output_config()
@@ -34,8 +39,8 @@ logger = get_logger(LOGGER_GIT2BASE)
 run_dir_data: str | None = None
 
 
-class RunMetaPlugin(Protocol):
-    def prepare_run(
+class RunMetaProducer(Protocol):
+    def project_metadata(
         self,
         *,
         artifacts_root: str,
@@ -45,7 +50,20 @@ class RunMetaPlugin(Protocol):
         base: str,
         target: str,
         repo_path: str,
-    ) -> str: ...
+    ) -> dict: ...
+
+    def run_metadata(
+        self,
+        *,
+        artifacts_root: str,
+        project: str,
+        run_id: str,
+        mode: str,
+        branch: str,
+        base: str,
+        target: str,
+        repo_path: str,
+    ) -> dict: ...
 
 
 def _ensure_dir(p: str):
@@ -67,76 +85,115 @@ def _load_projects_json(project_dir: str) -> dict:
     return {}
 
 
-def default_prepare_run(
+def _compute_run_layout(
     *,
     artifacts_root: str,
     project: str,
     mode: str,
-    branch: str,
     base: str,
     target: str,
-    repo_path: str,
-) -> str:
-    # run_id: Mode_YYYYMMDD-HHMMSS-<shorthash>
+) -> tuple[str, str, str]:
+    """Compute run_id and standard directory layout without writing metadata."""
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     short = (target or base or "run")[:7]
     run_id = f"{mode}_{ts}-{short}"
     project_dir = os.path.join(artifacts_root, project)
-    runs_dir = os.path.join(project_dir, "runs")
-    run_dir = os.path.join(runs_dir, run_id)
+    run_dir = os.path.join(project_dir, "runs", run_id)
     data_dir = os.path.join(run_dir, "data")
-    # metrics_dir = os.path.join(run_dir, "metrics")
-    # charts_dir = os.path.join(metrics_dir, "charts")
-    for d in (project_dir, runs_dir, run_dir, data_dir):
+    for d in (project_dir, os.path.dirname(run_dir), run_dir, data_dir):
         _ensure_dir(d)
-
-    # project.json upsert (minimal fields)
-    project_json = _load_projects_json(project_dir)
-    project_json.setdefault("schema_version", "1.0")
-    project_json.setdefault("id", project)
-    project_json.setdefault("title", project)
-    project_json["latest_run"] = run_id
-    project_json["updated_at"] = (
-        datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
-    )
-    runs_list = project_json.setdefault("runs", [])
-    runs_list.append(
-        {
-            "run_id": run_id,
-            "run_type": ("snapshot" if mode == "snap" or mode == "hist" else "diff"),
-            "scope_key": (
-                base if (mode == "snap" or mode == "hist") else f"{base}..{target}"
-            ),
-            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds")
-            + "Z",
-        }
-    )
-    _atomic_write_json(os.path.join(project_dir, "project.json"), project_json)
-
-    # run.json skeleton (metrics_files can be filled by dashboard/aggregator later)
-    run_json = {
-        "schema_version": "1.0",
-        "project_id": project,
-        "run_id": run_id,
-        "run_type": ("snapshot" if mode == "snap" or mode == "hist" else "diff"),
-        "scope_type": ("snapshot" if mode == "snap" or mode == "hist" else "diff"),
-        "scope_key": (
-            base if (mode == "snap" or mode == "hist") else f"{base}..{target}"
-        ),
-        "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z",
-    }
-    _atomic_write_json(os.path.join(run_dir, "run.json"), run_json)
-    return run_dir
+    return run_id, project_dir, run_dir
 
 
-def load_runmeta_plugin() -> Callable[..., str]:
-    # ENV override: module:function
+class DefaultRunMetaProducer:
+    def project_metadata(
+        self,
+        *,
+        artifacts_root: str,
+        project: str,
+        mode: str,
+        branch: str,
+        base: str,
+        target: str,
+        repo_path: str,
+    ) -> dict:
+        # Minimal default: no extra fields beyond core-managed ones.
+        return {"title": project}
+
+    def run_metadata(
+        self,
+        *,
+        artifacts_root: str,
+        project: str,
+        run_id: str,
+        mode: str,
+        branch: str,
+        base: str,
+        target: str,
+        repo_path: str,
+    ) -> dict:
+        # Minimal default: allow plugin users to enrich later if desired
+        return {}
+
+
+def load_runmeta_plugin() -> RunMetaProducer:
+    """Load a metadata producer plugin.
+
+    The environment variable `GIT2BASE_RUNMETA_PLUGIN` should point to
+    `module:attr`. The attribute can be:
+      - an object implementing `project_metadata` and `run_metadata`
+      - a zero-arg callable returning such an object (factory or class)
+    If unset, a default producer is used.
+    """
     spec = os.environ.get("GIT2BASE_RUNMETA_PLUGIN")
     if spec:
-        mod, func = spec.split(":", 1)
-        m = __import__(mod, fromlist=[func])
-        return getattr(m, func)
-    return default_prepare_run
+        mod, attr = spec.split(":", 1)
+        m = __import__(mod, fromlist=[attr])
+        obj: Any = getattr(m, attr)
+        candidate = obj() if callable(obj) else obj
+        if hasattr(candidate, "project_metadata") and hasattr(candidate, "run_metadata"):
+            return candidate  # type: ignore[return-value]
+        raise TypeError(
+            "Invalid GIT2BASE_RUNMETA_PLUGIN: must provide object or factory with project_metadata/run_metadata"
+        )
+
+    # Auto-discovery from ./plugins next to executable (portable distribution)
+    try:
+        base_dir = get_executable_dir()
+        plugins_dir = os.path.join(base_dir, "plugins")
+        if os.path.isdir(plugins_dir):
+            if plugins_dir not in sys.path:
+                sys.path.insert(0, plugins_dir)
+            # Try common module names and attributes
+            module_candidates = ["runmeta", "runmeta_plugin", "g2b_runmeta"]
+            attr_candidates = ["producer", "make", "get_producer", "RunMetaProducer", "Plugin"]
+            for mod_name in module_candidates:
+                try:
+                    m = __import__(mod_name)
+                except Exception:
+                    continue
+                for attr in attr_candidates:
+                    if hasattr(m, attr):
+                        obj: Any = getattr(m, attr)
+                        candidate = obj() if callable(obj) else obj
+                        if hasattr(candidate, "project_metadata") and hasattr(candidate, "run_metadata"):
+                            return candidate  # type: ignore[return-value]
+            # Fallback: if module itself exposes the two functions at top-level
+            for mod_name in module_candidates:
+                try:
+                    m = __import__(mod_name)
+                except Exception:
+                    continue
+                if hasattr(m, "project_metadata") and hasattr(m, "run_metadata"):
+                    class _Wrap:
+                        project_metadata = staticmethod(getattr(m, "project_metadata"))
+                        run_metadata = staticmethod(getattr(m, "run_metadata"))
+                    return _Wrap()  # type: ignore[return-value]
+    except Exception:
+        # Silent fallback to default if discovery fails
+        pass
+
+    return DefaultRunMetaProducer()
 
 
 def commit_exec(
@@ -563,17 +620,92 @@ def main():
     if not artifacts_root:
         artifacts_root = os.path.join(repo.workdir, "artifacts")
 
-    prep = load_runmeta_plugin()
+    producer = load_runmeta_plugin()
     repo_path = args.repo
-    run_dir = prep(
+
+    # Compute layout and ensure directories
+    run_id, project_dir, run_dir = _compute_run_layout(
         artifacts_root=artifacts_root,
         project=project,
         mode=mode,
-        branch=branch or "",
         base=base or "",
         target=target or "",
-        repo_path=repo_path,
     )
+
+    # Derive common fields
+    run_type = "snapshot" if mode == "snap" or mode == "hist" else "diff"
+    scope_key = (base or "") if (mode == "snap" or mode == "hist") else f"{base}..{target}"
+
+    # Upsert project.json (core-managed fields) and merge plugin project metadata
+    project_json = _load_projects_json(project_dir)
+    project_json.setdefault("schema_version", "1.0")
+    project_json.setdefault("id", project)
+    project_json.setdefault("title", project)
+    project_json["latest_run"] = run_id
+    project_json["updated_at"] = (
+        datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
+    )
+    runs_list = project_json.setdefault("runs", [])
+    runs_list.append(
+        {
+            "run_id": run_id,
+            "run_type": run_type,
+            "scope_key": scope_key,
+            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds")
+            + "Z",
+        }
+    )
+    # Merge in plugin-provided project metadata (excluding reserved keys)
+    try:
+        plugin_proj_meta = producer.project_metadata(
+            artifacts_root=artifacts_root,
+            project=project,
+            mode=mode,
+            branch=branch or "",
+            base=base or "",
+            target=target or "",
+            repo_path=repo_path,
+        ) or {}
+        reserved = {"schema_version", "id", "latest_run", "updated_at", "runs"}
+        for k, v in plugin_proj_meta.items():
+            if k not in reserved:
+                project_json[k] = v
+    except Exception as e:
+        logger.warning(f"Project metadata plugin error: {e}")
+
+    _atomic_write_json(os.path.join(project_dir, "project.json"), project_json)
+
+    # Initialize run.json skeleton and merge plugin run metadata
+    run_json = {
+        "schema_version": "1.0",
+        "project_id": project,
+        "run_id": run_id,
+        "run_type": run_type,
+        "scope_type": run_type,
+        "scope_key": scope_key,
+        "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z",
+    }
+    try:
+        plugin_run_meta = producer.run_metadata(
+            artifacts_root=artifacts_root,
+            project=project,
+            run_id=run_id,
+            mode=mode,
+            branch=branch or "",
+            base=base or "",
+            target=target or "",
+            repo_path=repo_path,
+        ) or {}
+        # Allow plugin to add/override non-core fields; protect core-managed ones
+        reserved = {"schema_version", "project_id", "run_id", "run_type", "scope_type", "scope_key", "started_at"}
+        for k, v in plugin_run_meta.items():
+            if k in reserved:
+                continue
+            run_json[k] = v
+    except Exception as e:
+        logger.warning(f"Run metadata plugin error: {e}")
+
+    _atomic_write_json(os.path.join(run_dir, "run.json"), run_json)
 
     global run_dir_data
     run_dir_data = os.path.join(run_dir, "data")
