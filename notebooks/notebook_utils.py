@@ -33,7 +33,7 @@ from IPython.display import display
 
 
 def select_repo_and_run(
-    base_dir="../data",
+    base_dir="../artifacts",
 ) -> tuple[widgets.Dropdown, widgets.Dropdown]:
     """
     在 Jupyter Notebook 中创建两个级联下拉框用于选择：
@@ -64,7 +64,7 @@ def select_repo_and_run(
     def update_runs(*args):
         selected_repo = repo_selector.value
         if selected_repo:
-            run_path = os.path.join(base_dir, selected_repo)
+            run_path = os.path.join(base_dir, selected_repo, "runs")
             runs = sorted(os.listdir(run_path), reverse=True)
             run_selector.options = runs
             if runs:
@@ -93,7 +93,7 @@ def load_csv_results(
     """
     selected_repo = str(repo_selector.value)
     selected_run = str(run_selector.value)
-    selected_path = os.path.join(base_dir, selected_repo, selected_run)
+    selected_path = os.path.join(base_dir, selected_repo, "runs", selected_run, "data")
     print("Selected path:", selected_path)
 
     # 要加载的文件名列表
