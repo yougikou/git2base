@@ -3,10 +3,12 @@ jupyter
 matplotlib
 pandas
 panel
+papermill
 psycopg2-binary
 pygit2
 pyyaml
 seaborn
 sqlalchemy
 tqdm
+voila
 watchfiles
