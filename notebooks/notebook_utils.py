@@ -1,6 +1,12 @@
-import os
-import matplotlib.pyplot as plt
+from typing import Dict, Tuple
+
+import ipywidgets as widgets
 import matplotlib.font_manager as fm
+import matplotlib.pyplot as plt
+import pandas as pd
+from IPython.display import display
+
+from quickstart_dashboard import CSV_FILE_MAP, RunDataLoader
 
 
 def set_cjk_font(verbose=True):
@@ -28,10 +34,6 @@ def set_cjk_font(verbose=True):
     return None
 
 
-import ipywidgets as widgets
-from IPython.display import display
-
-
 def select_repo_and_run(
     base_dir="../artifacts",
 ) -> tuple[widgets.Dropdown, widgets.Dropdown]:
@@ -43,13 +45,8 @@ def select_repo_and_run(
     返回：repo_selector, run_selector 两个 ipywidgets.Dropdown 对象
     """
     # 获取 repo 文件夹名
-    repo_names = sorted(
-        [
-            name
-            for name in os.listdir(base_dir)
-            if os.path.isdir(os.path.join(base_dir, name))
-        ]
-    )
+    loader = RunDataLoader(base_dir=base_dir)
+    repo_names = loader.list_repos()
 
     # 创建 widgets
     repo_selector = widgets.Dropdown(
@@ -63,12 +60,12 @@ def select_repo_and_run(
     # repo 改变时更新 run 下拉框
     def update_runs(*args):
         selected_repo = repo_selector.value
-        if selected_repo:
-            run_path = os.path.join(base_dir, selected_repo, "runs")
-            runs = sorted(os.listdir(run_path), reverse=True)
-            run_selector.options = runs
-            if runs:
-                run_selector.value = runs[0]
+        runs = loader.list_runs(selected_repo) if selected_repo else []
+        run_selector.options = runs
+        if runs:
+            run_selector.value = runs[0]
+        else:
+            run_selector.value = None
 
     repo_selector.observe(update_runs, names="value")
     update_runs()
@@ -76,10 +73,6 @@ def select_repo_and_run(
     display(repo_selector, run_selector)
 
     return repo_selector, run_selector
-
-
-import pandas as pd
-from typing import Dict, Tuple
 
 
 def load_csv_results(
@@ -91,31 +84,33 @@ def load_csv_results(
         - 选定路径
         - 加载后的 DataFrame 字典（键是变量名）
     """
+    loader = RunDataLoader(base_dir=base_dir)
+
     selected_repo = str(repo_selector.value)
     selected_run = str(run_selector.value)
-    selected_path = os.path.join(base_dir, selected_repo, "runs", selected_run, "data")
+
+    if not selected_repo or not selected_run:
+        print("❌ Repo 或 Run 未选择，无法加载数据。")
+        return "", {}
+
+    run_data = loader.load_run(selected_repo, selected_run)
+    if run_data is None:
+        print("❌ 未找到指定运行的分析结果。")
+        return "", {}
+
+    selected_path = str(run_data.path)
     print("Selected path:", selected_path)
 
-    # 要加载的文件名列表
-    csv_files = {
-        "commit_files.csv": "commit_files_df",
-        "diff_results.csv": "diff_results_df",
-        "analysis_results.csv": "analysis_results_df",
-        "commits.csv": "commits_df",
-    }
-
-    # 用于保存加载结果
     loaded_dfs: Dict[str, pd.DataFrame] = {}
-
-    for file_name, var_name in csv_files.items():
-        file_path = os.path.join(selected_path, file_name)
-        if os.path.exists(file_path):
-            try:
-                df = pd.read_csv(file_path)
-                loaded_dfs[var_name] = df
-                print(f"✅ Loaded: {file_name} ({len(df)} rows)")
-            except Exception as e:
-                print(f"⚠️ Failed to load: {file_name}, error: {e}")
+    for file_name, var_name in CSV_FILE_MAP.items():
+        csv_path = run_data.path / file_name
+        df = run_data.dataframes.get(var_name)
+        if df is not None:
+            loaded_dfs[var_name] = df
+            print(f"✅ Loaded: {file_name} ({len(df)} rows)")
+        elif csv_path.exists():
+            # 文件存在但解析失败会在 load_run 中打印 warning
+            print(f"⚠️ Failed to parse: {file_name}")
         else:
             print(f"❌ File not found: {file_name}")
 
