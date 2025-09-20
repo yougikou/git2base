@@ -329,6 +329,98 @@ class RecordCountStatistic(BaseStatistic):
         )
 
 
+class DiffFileChangeCountStatistic(BaseStatistic):
+    """Summarize added/changed/deleted file counts for diff runs."""
+
+    def __init__(self) -> None:
+        self.name = "变更文件统计"
+        self.description = "针对 diff 运行统计新增/变更/删除的文件数量"
+
+    def _extract(self, run: RunData) -> Optional[dict[str, int]]:
+        run_type = (run.metadata or {}).get("run_type")
+        if run_type != "diff":
+            return None
+
+        diff_df = run.dataframes.get("diff_results_df")
+        if diff_df is None:
+            return None
+
+        if "diff_change_type" not in diff_df.columns:
+            return None
+
+        series = diff_df["diff_change_type"].fillna("").astype(str)
+        counts = {
+            "added": int((series == "A").sum()),
+            "changed": int(series.isin({"M", "R"}).sum()),
+            "deleted": int((series == "D").sum()),
+        }
+        return counts
+
+    def _render_cards(self, counts: Optional[dict[str, int]]) -> widgets.Widget:
+        mapping = (
+            ("新增文件", "added"),
+            ("变更文件", "changed"),
+            ("删除文件", "deleted"),
+        )
+        cards = []
+        for title, key in mapping:
+            value = "N/A" if counts is None else str(counts.get(key, 0))
+            cards.append(_stat_card(title, value))
+        return widgets.HBox(cards, layout=widgets.Layout(gap="12px"))
+
+    def render_single(self, run: RunData) -> widgets.Widget:
+        counts = self._extract(run)
+        header = widgets.HTML(
+            value=f"<b>{self.name}</b><div style='color:#666;font-size:11px;'>{self.description}</div>"
+        )
+        return widgets.VBox([header, self._render_cards(counts)])
+
+    def render_trend(self, history: RunHistory) -> widgets.Widget:
+        records: List[dict[str, object]] = []
+        for run in history.runs:
+            counts = self._extract(run)
+            if counts is None:
+                continue
+            records.append(
+                {
+                    "label": run.display_label,
+                    "timestamp": run.timestamp,
+                    "added": counts["added"],
+                    "changed": counts["changed"],
+                    "deleted": counts["deleted"],
+                }
+            )
+
+        if not records:
+            return widgets.HTML(
+                value=f"<div style='color:#666;'>暂无 {self.name} 的历史数据可以展示。</div>"
+            )
+
+        df = pd.DataFrame(records)
+        df.sort_values(by="timestamp", inplace=True)
+
+        output = widgets.Output()
+        with output:
+            fig, ax = plt.subplots(figsize=(6, 3))
+            ax.plot(df["label"], df["added"], marker="o", label="新增")
+            ax.plot(df["label"], df["changed"], marker="o", label="变更")
+            ax.plot(df["label"], df["deleted"], marker="o", label="删除")
+            ax.set_title(self.name)
+            ax.set_xlabel("Run")
+            ax.set_ylabel("数量")
+            ax.grid(True, linestyle="--", alpha=0.3)
+            plt.xticks(rotation=30, ha="right")
+            ax.legend()
+            plt.tight_layout()
+            display(fig)
+            plt.close(fig)
+
+        header = widgets.HTML(
+            value=f"<b>{self.name}</b><div style='color:#666;font-size:11px;'>{self.description}</div>"
+        )
+        return widgets.VBox([header, output])
+
+
 class FileCharCountDistributionStatistic(BaseStatistic):
     """Bucket files by character count and highlight diff additions/modifications."""
 
@@ -884,6 +976,7 @@ class QuickstartDashboard:
 
 __all__ = [
     "BaseStatistic",
+    "DiffFileChangeCountStatistic",
     "FileCharCountDistributionStatistic",
     "QuickstartDashboard",
     "RecordCountStatistic",
