@@ -123,7 +123,7 @@ class RunDataLoader:
         if not self.base_dir.exists():
             return []
         return sorted(
-            [item.name for item in self.base_dir.iterdir() if item.is_dir()]
+            {item.name for item in self.base_dir.iterdir() if item.is_dir()}
         )
 
     def list_runs(self, repo: str) -> List[str]:
@@ -297,7 +297,8 @@ class RecordCountStatistic(BaseStatistic):
 @dataclass
 class _RepoPage:
     repo: str
-    run_selector: widgets.Dropdown
+    single_run_selector: widgets.Dropdown
+    trend_run_selector: widgets.SelectMultiple
     single_container: widgets.Box
     trend_container: widgets.Box
     tab: widgets.Tab
@@ -364,10 +365,15 @@ class QuickstartDashboard:
 
     def _create_repo_page(self, repo: str) -> _RepoPage:
         runs = self.loader.list_runs(repo)
-        run_selector = widgets.Dropdown(
+        single_selector = widgets.Dropdown(
             options=runs,
             description="Run:",
-            layout=widgets.Layout(width="50%"),
+            layout=widgets.Layout(width="60%"),
+        )
+        trend_selector = widgets.SelectMultiple(
+            options=runs,
+            description="Runs:",
+            layout=widgets.Layout(width="60%", height="120px"),
         )
 
         single_container = widgets.Box(
@@ -377,44 +383,81 @@ class QuickstartDashboard:
             layout=widgets.Layout(display="flex", flex_flow="column", gap="18px")
         )
 
-        tabs = widgets.Tab(children=[single_container, trend_container])
+        single_panel = widgets.VBox(
+            [single_selector, single_container], layout=widgets.Layout(gap="12px")
+        )
+        trend_panel = widgets.VBox(
+            [trend_selector, trend_container], layout=widgets.Layout(gap="12px")
+        )
+
+        tabs = widgets.Tab(children=[single_panel, trend_panel])
         tabs.set_title(0, "单次执行统计")
         tabs.set_title(1, "趋势分析")
 
-        container = widgets.VBox([run_selector, tabs], layout=widgets.Layout(gap="12px"))
+        container = widgets.VBox([tabs])
         page = _RepoPage(
             repo=repo,
-            run_selector=run_selector,
+            single_run_selector=single_selector,
+            trend_run_selector=trend_selector,
             single_container=single_container,
             trend_container=trend_container,
             tab=tabs,
             container=container,
         )
 
-        # Load once initially
-        self._update_repo_page(page)
+        self._initialize_repo_page(page)
 
-        def _on_change(change: dict) -> None:
-            if change.get("name") == "value" and change.get("new"):
-                self._update_repo_page(page)
+        def _on_single_change(change: dict) -> None:
+            if change.get("name") == "value":
+                self._update_single_statistics(page)
 
-        run_selector.observe(_on_change, names="value")
+        def _on_trend_change(change: dict) -> None:
+            if change.get("name") == "value":
+                self._update_trend_statistics(page)
+
+        single_selector.observe(_on_single_change, names="value")
+        trend_selector.observe(_on_trend_change, names="value")
         return page
 
     # -- updating ------------------------------------------------------
 
-    def _update_repo_page(self, page: _RepoPage) -> None:
-        run_name = page.run_selector.value
+    def _initialize_repo_page(self, page: _RepoPage) -> None:
+        page.history = self.loader.load_history(page.repo)
+        runs = [run.run for run in (page.history.runs if page.history else [])]
+
+        page.single_run_selector.options = runs
+        page.trend_run_selector.options = runs
+
+        if runs:
+            if page.single_run_selector.value not in runs:
+                page.single_run_selector.value = runs[0]
+            if not page.trend_run_selector.value:
+                page.trend_run_selector.value = tuple(runs)
+        else:
+            page.single_run_selector.value = None
+            page.trend_run_selector.value = ()
+
+        self._update_single_statistics(page)
+        self._update_trend_statistics(page)
+
+    def _update_single_statistics(self, page: _RepoPage) -> None:
+        run_name = page.single_run_selector.value
         if not run_name:
             page.single_container.children = (
                 widgets.HTML(value="<div style='color:#666;'>请选择一个运行。</div>"),
             )
-            page.trend_container.children = (
-                widgets.HTML(value="<div style='color:#666;'>无可展示的历史数据。</div>"),
-            )
             return
 
-        run_data = self.loader.load_run(page.repo, run_name)
+        run_data: Optional[RunData] = None
+        if page.history:
+            for candidate in page.history.runs:
+                if candidate.run == run_name:
+                    run_data = candidate
+                    break
+
+        if run_data is None:
+            run_data = self.loader.load_run(page.repo, run_name)
+
         if run_data is None:
             page.single_container.children = (
                 widgets.HTML(
@@ -422,8 +465,6 @@ class QuickstartDashboard:
                 ),
             )
             return
-
-        page.history = self.loader.load_history(page.repo)
 
         single_widgets = [stat.render_single(run_data) for stat in self.statistics]
         if not single_widgets:
@@ -434,7 +475,32 @@ class QuickstartDashboard:
             ]
         page.single_container.children = tuple(single_widgets)
 
-        trend_widgets = [stat.render_trend(page.history) for stat in self.statistics]
+    def _update_trend_statistics(self, page: _RepoPage) -> None:
+        if page.history is None:
+            page.trend_container.children = (
+                widgets.HTML(value="<div style='color:#666;'>无可展示的历史数据。</div>"),
+            )
+            return
+
+        selected_runs = list(page.trend_run_selector.value or [])
+        if not selected_runs:
+            page.trend_container.children = (
+                widgets.HTML(value="<div style='color:#666;'>请选择至少一个运行以展示趋势。</div>"),
+            )
+            return
+
+        selected = set(selected_runs)
+        filtered_runs = [run for run in page.history.runs if run.run in selected]
+        if not filtered_runs:
+            page.trend_container.children = (
+                widgets.HTML(value="<div style='color:#666;'>所选运行没有历史数据。</div>"),
+            )
+            return
+
+        filtered_history = RunHistory(repo=page.repo, runs=list(filtered_runs))
+        filtered_history.ensure_sorted()
+
+        trend_widgets = [stat.render_trend(filtered_history) for stat in self.statistics]
         if not trend_widgets:
             trend_widgets = [
                 widgets.HTML(
