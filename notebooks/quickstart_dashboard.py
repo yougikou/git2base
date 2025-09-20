@@ -31,6 +31,7 @@ historical context.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -81,6 +82,7 @@ class RunData:
     repo: str
     run: str
     path: Path
+    metadata: Dict[str, object]
     dataframes: Dict[str, pd.DataFrame]
     timestamp: Optional[datetime]
 
@@ -152,8 +154,16 @@ class RunDataLoader:
                 except Exception as exc:  # pragma: no cover - defensive logging
                     print(f"⚠️ Failed to read {csv_path}: {exc}")
 
+        metadata = self._load_run_metadata(repo, run)
         run_timestamp = _parse_run_timestamp(run)
-        return RunData(repo=repo, run=run, path=data_dir, dataframes=dataframes, timestamp=run_timestamp)
+        return RunData(
+            repo=repo,
+            run=run,
+            path=data_dir,
+            metadata=metadata,
+            dataframes=dataframes,
+            timestamp=run_timestamp,
+        )
 
     def load_history(
         self, repo: str, limit: Optional[int] = None, eager: bool = True
@@ -173,6 +183,7 @@ class RunDataLoader:
                     repo=repo,
                     run=run_name,
                     path=self.base_dir / repo / "runs" / run_name / "data",
+                    metadata=self._load_run_metadata(repo, run_name),
                     dataframes={},
                     timestamp=_parse_run_timestamp(run_name),
                 )
@@ -181,6 +192,21 @@ class RunDataLoader:
 
         history.ensure_sorted()
         return history
+
+    def _load_run_metadata(self, repo: str, run: str) -> Dict[str, object]:
+        metadata_path = self.base_dir / repo / "runs" / run / "run.json"
+        if not metadata_path.exists():
+            return {}
+
+        try:
+            with metadata_path.open("r", encoding="utf-8") as handle:
+                raw = handle.read()
+            if not raw.strip():
+                return {}
+            return json.loads(raw)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            print(f"⚠️ Failed to read {metadata_path}: {exc}")
+            return {}
 
 
 # ---------------------------------------------------------------------------
