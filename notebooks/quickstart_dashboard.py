@@ -226,22 +226,64 @@ class BaseStatistic:
         raise NotImplementedError
 
 
-def _stat_card(title: str, value: str, description: str | None = None) -> widgets.Widget:
-    body = [
+def _card_container(
+    title: str,
+    *,
+    description: str | None = None,
+    body_html: str | None = None,
+    body_widgets: widgets.Widget | Sequence[widgets.Widget] | None = None,
+    min_width: str = "220px",
+    flex: str = "1 1 240px",
+) -> widgets.Widget:
+    """Render a card with a consistent border/padding layout."""
+
+    header_parts = [
         f"<div style='font-size:12px;color:#666;'>{title}</div>",
-        f"<div style='font-size:26px;font-weight:bold;margin-top:6px;'>{value}</div>",
     ]
     if description:
-        body.append(
-            f"<div style='font-size:11px;color:#999;margin-top:4px;'>{description}</div>"
+        header_parts.append(
+            f"<div style='font-size:11px;color:#999;margin-top:2px;'>{description}</div>"
         )
-    html = "".join(body)
-    return widgets.HTML(
-        value=(
-            "<div style='padding:12px 16px;border:1px solid #ddd;border-radius:8px;"
-            "min-width:160px;background:#fafafa;'>"
-            f"{html}</div>"
-        )
+
+    children: List[widgets.Widget] = [
+        widgets.HTML(value="".join(header_parts))
+    ]
+
+    if body_html:
+        children.append(widgets.HTML(value=body_html))
+
+    if body_widgets is not None:
+        if isinstance(body_widgets, widgets.Widget):
+            children.append(body_widgets)
+        else:
+            for item in body_widgets:
+                children.append(item)
+
+    layout = widgets.Layout(
+        padding="12px 16px",
+        border_top="1px solid #ddd",
+        border_right="1px solid #ddd",
+        border_bottom="1px solid #ddd",
+        border_left="1px solid #ddd",
+        margin="0 12px 12px 0",
+        min_width=min_width,
+        width="auto",
+        flex=flex,
+        display="flex",
+        flex_flow="column",
+    )
+
+    return widgets.VBox(children, layout=layout)
+
+
+def _stat_card(title: str, value: str, description: str | None = None) -> widgets.Widget:
+    body_html = f"<div style='font-size:26px;font-weight:bold;margin-top:6px;'>{value}</div>"
+    return _card_container(
+        title,
+        description=description,
+        body_html=body_html,
+        min_width="200px",
+        flex="1 1 200px",
     )
 
 
@@ -294,10 +336,14 @@ class RecordCountStatistic(BaseStatistic):
                 )
 
         if not records:
-            return widgets.HTML(
-                value=(
+            return _card_container(
+                self.name,
+                description=self.description,
+                body_html=(
                     f"<div style='color:#666;'>暂无 {self.name} 的历史数据可以展示。</div>"
-                )
+                ),
+                min_width="320px",
+                flex="1 1 100%",
             )
 
         df = pd.DataFrame(records)
@@ -316,16 +362,12 @@ class RecordCountStatistic(BaseStatistic):
             display(fig)
             plt.close(fig)
 
-        description = self.description
-        return widgets.VBox(
-            [
-                widgets.HTML(
-                    value=(
-                        f"<b>{self.name}</b><div style='color:#666;font-size:11px;'>{description}</div>"
-                    )
-                ),
-                output,
-            ]
+        return _card_container(
+            self.name,
+            description=self.description,
+            body_widgets=output,
+            min_width="320px",
+            flex="1 1 100%",
         )
 
 
@@ -356,24 +398,50 @@ class DiffFileChangeCountStatistic(BaseStatistic):
         }
         return counts
 
-    def _render_cards(self, counts: Optional[dict[str, int]]) -> widgets.Widget:
-        mapping = (
-            ("新增文件", "added"),
-            ("变更文件", "changed"),
-            ("删除文件", "deleted"),
-        )
-        cards = []
-        for title, key in mapping:
-            value = "N/A" if counts is None else str(counts.get(key, 0))
-            cards.append(_stat_card(title, value))
-        return widgets.HBox(cards, layout=widgets.Layout(gap="12px"))
-
     def render_single(self, run: RunData) -> widgets.Widget:
-        counts = self._extract(run)
-        header = widgets.HTML(
-            value=f"<b>{self.name}</b><div style='color:#666;font-size:11px;'>{self.description}</div>"
+        run_type = (run.metadata or {}).get("run_type", "")
+        counts = self._extract(run) if run_type == "diff" else None
+
+        if run_type != "diff":
+            message = f"仅针对 diff 运行展示，当前运行类型为 {run_type or '未知'}。"
+            return _card_container(
+                self.name,
+                description=self.description,
+                body_html=f"<div style='color:#666;'>{message}</div>",
+            )
+
+        if counts is None:
+            return _card_container(
+                self.name,
+                description=self.description,
+                body_html="<div style='color:#666;'>未找到 diff 结果，无法统计文件变更数量。</div>",
+            )
+
+        mapping = (
+            ("新增文件", counts.get("added", 0)),
+            ("变更文件", counts.get("changed", 0)),
+            ("删除文件", counts.get("deleted", 0)),
         )
-        return widgets.VBox([header, self._render_cards(counts)])
+        rows = [
+            "<table style='border-collapse:collapse;width:100%;font-size:13px;'>",
+            "<tbody>",
+        ]
+        for label, value in mapping:
+            rows.append("<tr>")
+            rows.append(
+                f"<td style='padding:6px 4px;color:#555;'>{label}</td>"
+            )
+            rows.append(
+                f"<td style='padding:6px 4px;text-align:right;font-weight:600;color:#222;'>{value}</td>"
+            )
+            rows.append("</tr>")
+        rows.append("</tbody></table>")
+
+        return _card_container(
+            self.name,
+            description=self.description,
+            body_html="".join(rows),
+        )
 
     def render_trend(self, history: RunHistory) -> widgets.Widget:
         records: List[dict[str, object]] = []
@@ -392,8 +460,12 @@ class DiffFileChangeCountStatistic(BaseStatistic):
             )
 
         if not records:
-            return widgets.HTML(
-                value=f"<div style='color:#666;'>暂无 {self.name} 的历史数据可以展示。</div>"
+            return _card_container(
+                self.name,
+                description=self.description,
+                body_html=f"<div style='color:#666;'>暂无 {self.name} 的历史数据可以展示。</div>",
+                min_width="320px",
+                flex="1 1 100%",
             )
 
         df = pd.DataFrame(records)
@@ -415,10 +487,13 @@ class DiffFileChangeCountStatistic(BaseStatistic):
             display(fig)
             plt.close(fig)
 
-        header = widgets.HTML(
-            value=f"<b>{self.name}</b><div style='color:#666;font-size:11px;'>{self.description}</div>"
+        return _card_container(
+            self.name,
+            description=self.description,
+            body_widgets=output,
+            min_width="320px",
+            flex="1 1 100%",
         )
-        return widgets.VBox([header, output])
 
 
 class FileCharCountDistributionStatistic(BaseStatistic):
@@ -476,31 +551,32 @@ class FileCharCountDistributionStatistic(BaseStatistic):
             diff_df = run.dataframes.get("diff_results_df")
             if diff_df is not None and not diff_df.empty:
                 diff_df = diff_df.copy()
-                for column in ("target_commit_hash", "target_path", "diff_change_type"):
+                for column in (
+                    "target_path",
+                    "source_path",
+                    "diff_change_type",
+                ):
                     if column not in diff_df.columns:
                         diff_df[column] = ""
-                diff_df["target_commit_hash"] = diff_df["target_commit_hash"].fillna("").astype(str)
+
                 diff_df["target_path"] = diff_df["target_path"].fillna("").astype(str)
+                diff_df["source_path"] = diff_df["source_path"].fillna("").astype(str)
                 diff_df["diff_change_type"] = diff_df["diff_change_type"].fillna("").astype(str)
 
-                target_commits = {
-                    value for value in diff_df["target_commit_hash"].tolist() if value
-                }
-                if target_commits:
-                    df = df[df["commit_hash"].isin(target_commits)].copy()
-
-                diff_map = diff_df[["target_commit_hash", "target_path", "diff_change_type"]].rename(
-                    columns={
-                        "target_commit_hash": "commit_hash",
-                        "target_path": "path",
-                    }
+                diff_df["_merge_path"] = diff_df["target_path"].where(
+                    diff_df["target_path"] != "",
+                    diff_df["source_path"],
+                )
+                diff_map = (
+                    diff_df[["_merge_path", "diff_change_type"]]
+                    .rename(columns={"_merge_path": "path"})
+                    .drop_duplicates(subset=["path"])
                 )
 
-                df = df.merge(diff_map, on=["commit_hash", "path"], how="left")
-                if "diff_change_type" in df.columns:
-                    df["diff_change_type"] = df["diff_change_type"].replace("", pd.NA)
-                    if df["diff_change_type"].notna().any():
-                        diff_info_available = True
+                df = df.merge(diff_map, on="path", how="left")
+                df["diff_change_type"] = df["diff_change_type"].replace("", pd.NA)
+                if df["diff_change_type"].notna().any():
+                    diff_info_available = True
             else:
                 df["diff_change_type"] = pd.NA
         else:
@@ -640,19 +716,30 @@ class FileCharCountDistributionStatistic(BaseStatistic):
     def render_single(self, run: RunData) -> widgets.Widget:
         summary = self._summaries(run)
         if summary is None:
-            return widgets.HTML(
-                value=(
-                    "<div style='color:#666;'>暂无 FileCharCount 分析结果可用于统计。</div>"
-                )
+            return _card_container(
+                self.name,
+                description=self.description,
+                body_html="<div style='color:#666;'>暂无 FileCharCount 分析结果可用于统计。</div>",
+                min_width="360px",
             )
 
-        header = widgets.HTML(
-            value=f"<b>{self.name}</b><div style='color:#666;font-size:11px;'>{self.description}</div>"
+        diff_run = summary["run_type"] == "diff"
+        diff_info = diff_run and summary["diff_info"]
+        if diff_info:
+            note = "统计基于 diff 运行匹配的 FileCharCount 结果。"
+        elif diff_run:
+            note = "diff 运行未匹配到文件级变更，新增/变更列以 “-” 显示。"
+        else:
+            run_label = summary["run_type"] or "未知"
+            note = f"当前运行类型为 {run_label}，新增/变更列以 “-” 显示。"
+
+        table = self._render_distribution_table(summary["rows"], diff_info)
+        return _card_container(
+            self.name,
+            description=self.description,
+            body_widgets=[widgets.HTML(value=f"<div style='color:#666;font-size:12px;'>{note}</div>"), table],
+            min_width="360px",
         )
-        table = self._render_distribution_table(
-            summary["rows"], summary["run_type"] == "diff" and summary["diff_info"]
-        )
-        return widgets.VBox([header, table])
 
     def render_trend(self, history: RunHistory) -> widgets.Widget:
         records: List[dict[str, object]] = []
@@ -687,10 +774,12 @@ class FileCharCountDistributionStatistic(BaseStatistic):
                 diff_info_available = True
 
         if not records:
-            return widgets.HTML(
-                value=(
-                    "<div style='color:#666;'>暂无 FileCharCount 历史数据可以展示。</div>"
-                )
+            return _card_container(
+                self.name,
+                description=self.description,
+                body_html="<div style='color:#666;'>暂无 FileCharCount 历史数据可以展示。</div>",
+                min_width="360px",
+                flex="1 1 100%",
             )
 
         df = pd.DataFrame(records)
@@ -698,16 +787,18 @@ class FileCharCountDistributionStatistic(BaseStatistic):
 
         pivot_total = (
             df.pivot_table(
-                index="range", columns="label", values="total", aggfunc="sum", fill_value=0
+                index="range",
+                columns="label",
+                values="total",
+                aggfunc="sum",
+                fill_value=0,
+                observed=False,
             )
             if not df.empty
             else pd.DataFrame()
         )
 
-        header = widgets.HTML(
-            value=f"<b>{self.name}</b><div style='color:#666;font-size:11px;'>{self.description}</div>"
-        )
-        children: List[widgets.Widget] = [header]
+        children: List[widgets.Widget] = []
 
         if not pivot_total.empty:
             children.append(self._render_matrix_table("各运行的文件数量分布", pivot_total, label_order))
@@ -721,6 +812,7 @@ class FileCharCountDistributionStatistic(BaseStatistic):
                     values="added",
                     aggfunc="sum",
                     fill_value=0,
+                    observed=False,
                 )
                 pivot_changed = diff_df.pivot_table(
                     index="range",
@@ -728,6 +820,7 @@ class FileCharCountDistributionStatistic(BaseStatistic):
                     values="changed",
                     aggfunc="sum",
                     fill_value=0,
+                    observed=False,
                 )
 
                 if not pivot_added.empty:
@@ -739,12 +832,18 @@ class FileCharCountDistributionStatistic(BaseStatistic):
                         self._render_matrix_table("变更文件分布", pivot_changed, label_order)
                     )
 
-        if len(children) == 1:
+        if not children:
             children.append(
                 widgets.HTML(value="<div style='color:#666;'>暂无可视化数据。</div>")
             )
 
-        return widgets.VBox(children)
+        return _card_container(
+            self.name,
+            description=self.description,
+            body_widgets=children,
+            min_width="360px",
+            flex="1 1 100%",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -841,10 +940,10 @@ class QuickstartDashboard:
         )
 
         single_container = widgets.Box(
-            layout=widgets.Layout(display="flex", flex_flow="row wrap", gap="12px")
+            layout=widgets.Layout(display="flex", flex_flow="row wrap")
         )
         trend_container = widgets.Box(
-            layout=widgets.Layout(display="flex", flex_flow="column", gap="18px")
+            layout=widgets.Layout(display="flex", flex_flow="column")
         )
 
         single_panel = widgets.VBox(
