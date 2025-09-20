@@ -329,6 +329,332 @@ class RecordCountStatistic(BaseStatistic):
         )
 
 
+class FileCharCountDistributionStatistic(BaseStatistic):
+    """Bucket files by character count and highlight diff additions/modifications."""
+
+    BINS: Sequence[tuple[str, int, Optional[int]]] = (
+        ("<1k", 0, 1_000),
+        ("1k-2k", 1_000, 2_000),
+        ("2k-3k", 2_000, 3_000),
+        ("3k-10k", 3_000, 10_000),
+        ("10k-50k", 10_000, 50_000),
+        (">=50k", 50_000, None),
+    )
+
+    def __init__(self) -> None:
+        self.name = "文件字符区间"
+        self.description = "基于 FileCharCount 分析结果统计字符区间，并区分新增/变更文件数量"
+
+    # -- helpers -----------------------------------------------------------
+
+    def _load_char_counts(self, run: RunData) -> Optional[pd.DataFrame]:
+        df = run.dataframes.get("analysis_results_df")
+        if df is None or df.empty:
+            return None
+
+        if "analyzer_type" not in df.columns or "count" not in df.columns:
+            return None
+
+        filtered = df[df["analyzer_type"] == "FileCharCount"].copy()
+        if filtered.empty:
+            return None
+
+        filtered["count"] = pd.to_numeric(filtered["count"], errors="coerce")
+        filtered.dropna(subset=["count"], inplace=True)
+        if filtered.empty:
+            return None
+
+        if "commit_hash" not in filtered.columns:
+            filtered["commit_hash"] = ""
+        else:
+            filtered["commit_hash"] = filtered["commit_hash"].fillna("").astype(str)
+
+        if "path" not in filtered.columns:
+            filtered["path"] = ""
+        else:
+            filtered["path"] = filtered["path"].fillna("").astype(str)
+        return filtered
+
+    def _attach_diff_metadata(self, run: RunData, df: pd.DataFrame) -> tuple[pd.DataFrame, str, bool]:
+        run_type = (run.metadata or {}).get("run_type", "")
+        df = df.copy()
+        diff_info_available = False
+
+        if run_type == "diff":
+            diff_df = run.dataframes.get("diff_results_df")
+            if diff_df is not None and not diff_df.empty:
+                diff_df = diff_df.copy()
+                for column in ("target_commit_hash", "target_path", "diff_change_type"):
+                    if column not in diff_df.columns:
+                        diff_df[column] = ""
+                diff_df["target_commit_hash"] = diff_df["target_commit_hash"].fillna("").astype(str)
+                diff_df["target_path"] = diff_df["target_path"].fillna("").astype(str)
+                diff_df["diff_change_type"] = diff_df["diff_change_type"].fillna("").astype(str)
+
+                target_commits = {
+                    value for value in diff_df["target_commit_hash"].tolist() if value
+                }
+                if target_commits:
+                    df = df[df["commit_hash"].isin(target_commits)].copy()
+
+                diff_map = diff_df[["target_commit_hash", "target_path", "diff_change_type"]].rename(
+                    columns={
+                        "target_commit_hash": "commit_hash",
+                        "target_path": "path",
+                    }
+                )
+
+                df = df.merge(diff_map, on=["commit_hash", "path"], how="left")
+                if "diff_change_type" in df.columns:
+                    df["diff_change_type"] = df["diff_change_type"].replace("", pd.NA)
+                    if df["diff_change_type"].notna().any():
+                        diff_info_available = True
+            else:
+                df["diff_change_type"] = pd.NA
+        else:
+            df["diff_change_type"] = pd.NA
+
+        return df, str(run_type), diff_info_available
+
+    def _bucket_label(self, value: float) -> str:
+        for label, lower, upper in self.BINS:
+            if value < lower:
+                continue
+            if upper is None or value < upper:
+                return label
+        return self.BINS[-1][0]
+
+    def _summaries(self, run: RunData) -> Optional[dict[str, object]]:
+        base_df = self._load_char_counts(run)
+        if base_df is None:
+            return None
+
+        df, run_type, diff_info_available = self._attach_diff_metadata(run, base_df)
+        if df.empty:
+            return None
+
+        df["range_label"] = df["count"].apply(self._bucket_label)
+
+        rows: List[dict[str, object]] = []
+        for label, _, _ in self.BINS:
+            subset = df[df["range_label"] == label]
+            total = int(subset.shape[0])
+            added: Optional[int] = None
+            changed: Optional[int] = None
+
+            if run_type == "diff" and diff_info_available:
+                added = int(subset["diff_change_type"].isin({"A"}).sum())
+                changed = int(subset["diff_change_type"].isin({"M", "R"}).sum())
+
+            rows.append(
+                {
+                    "range": label,
+                    "total": total,
+                    "added": added,
+                    "changed": changed,
+                }
+            )
+
+        return {
+            "rows": rows,
+            "run_type": run_type,
+            "diff_info": diff_info_available,
+        }
+
+    def _render_distribution_table(self, rows: Sequence[dict[str, object]], diff_info: bool) -> widgets.HTML:
+        header_cells = ["区间", "文件数", "新增", "变更"]
+        html = [
+            "<table style='border-collapse:collapse;font-size:12px;width:100%;max-width:520px;'>",
+            "<thead><tr>",
+        ]
+        for cell in header_cells:
+            html.append(
+                f"<th style='border-bottom:1px solid #ddd;padding:6px 8px;text-align:left;color:#555;font-weight:600;'>{cell}</th>"
+            )
+        html.append("</tr></thead><tbody>")
+
+        for row in rows:
+            total = row["total"]
+            added = row.get("added")
+            changed = row.get("changed")
+            html.append("<tr>")
+            html.append(
+                f"<td style='padding:6px 8px;border-bottom:1px solid #f0f0f0;color:#333;'>{row['range']}</td>"
+            )
+            html.append(
+                f"<td style='padding:6px 8px;border-bottom:1px solid #f0f0f0;color:#333;'>{total}</td>"
+            )
+            if diff_info:
+                html.append(
+                    f"<td style='padding:6px 8px;border-bottom:1px solid #f0f0f0;color:#333;'>{added if added is not None else 0}</td>"
+                )
+                html.append(
+                    f"<td style='padding:6px 8px;border-bottom:1px solid #f0f0f0;color:#333;'>{changed if changed is not None else 0}</td>"
+                )
+            else:
+                html.append(
+                    "<td style='padding:6px 8px;border-bottom:1px solid #f0f0f0;color:#999;'>-</td>"
+                )
+                html.append(
+                    "<td style='padding:6px 8px;border-bottom:1px solid #f0f0f0;color:#999;'>-</td>"
+                )
+            html.append("</tr>")
+
+        html.append("</tbody></table>")
+        return widgets.HTML(value="".join(html))
+
+    def _render_matrix_table(
+        self, title: str, df: pd.DataFrame, label_order: Sequence[str]
+    ) -> widgets.HTML:
+        if df.empty:
+            return widgets.HTML(value="")
+
+        df = df.copy()
+        df = df.reindex(self._bin_labels(), axis=0, fill_value=0)
+        df = df[[label for label in label_order if label in df.columns]]
+
+        html = [
+            f"<div style='font-size:12px;color:#555;font-weight:600;margin:8px 0 4px;'>{title}</div>",
+            "<table style='border-collapse:collapse;font-size:12px;width:100%;max-width:720px;'>",
+            "<thead><tr>",
+            "<th style='border-bottom:1px solid #ddd;padding:6px 8px;text-align:left;color:#555;font-weight:600;'>区间</th>",
+        ]
+        for col in df.columns:
+            html.append(
+                f"<th style='border-bottom:1px solid #ddd;padding:6px 8px;text-align:right;color:#555;font-weight:600;'>{col}</th>"
+            )
+        html.append("</tr></thead><tbody>")
+
+        for idx in df.index:
+            html.append("<tr>")
+            html.append(
+                f"<td style='padding:6px 8px;border-bottom:1px solid #f0f0f0;color:#333;'>{idx}</td>"
+            )
+            for col in df.columns:
+                value = int(df.loc[idx, col]) if pd.notna(df.loc[idx, col]) else ""
+                html.append(
+                    f"<td style='padding:6px 8px;border-bottom:1px solid #f0f0f0;color:#333;text-align:right;'>{value}</td>"
+                )
+            html.append("</tr>")
+
+        html.append("</tbody></table>")
+        return widgets.HTML(value="".join(html))
+
+    def _bin_labels(self) -> List[str]:
+        return [label for label, _, _ in self.BINS]
+
+    # -- rendering ---------------------------------------------------------
+
+    def render_single(self, run: RunData) -> widgets.Widget:
+        summary = self._summaries(run)
+        if summary is None:
+            return widgets.HTML(
+                value=(
+                    "<div style='color:#666;'>暂无 FileCharCount 分析结果可用于统计。</div>"
+                )
+            )
+
+        header = widgets.HTML(
+            value=f"<b>{self.name}</b><div style='color:#666;font-size:11px;'>{self.description}</div>"
+        )
+        table = self._render_distribution_table(
+            summary["rows"], summary["run_type"] == "diff" and summary["diff_info"]
+        )
+        return widgets.VBox([header, table])
+
+    def render_trend(self, history: RunHistory) -> widgets.Widget:
+        records: List[dict[str, object]] = []
+        label_order: List[str] = []
+        seen_labels: set[str] = set()
+        diff_info_available = False
+
+        for run in history.runs:
+            summary = self._summaries(run)
+            if summary is None:
+                continue
+
+            label = run.display_label
+            if label not in seen_labels:
+                label_order.append(label)
+                seen_labels.add(label)
+
+            for row in summary["rows"]:
+                records.append(
+                    {
+                        "range": row["range"],
+                        "total": row["total"],
+                        "added": row.get("added"),
+                        "changed": row.get("changed"),
+                        "label": label,
+                        "run_type": summary["run_type"],
+                        "diff_info": summary["diff_info"],
+                    }
+                )
+
+            if summary["run_type"] == "diff" and summary["diff_info"]:
+                diff_info_available = True
+
+        if not records:
+            return widgets.HTML(
+                value=(
+                    "<div style='color:#666;'>暂无 FileCharCount 历史数据可以展示。</div>"
+                )
+            )
+
+        df = pd.DataFrame(records)
+        df["range"] = pd.Categorical(df["range"], categories=self._bin_labels(), ordered=True)
+
+        pivot_total = (
+            df.pivot_table(
+                index="range", columns="label", values="total", aggfunc="sum", fill_value=0
+            )
+            if not df.empty
+            else pd.DataFrame()
+        )
+
+        header = widgets.HTML(
+            value=f"<b>{self.name}</b><div style='color:#666;font-size:11px;'>{self.description}</div>"
+        )
+        children: List[widgets.Widget] = [header]
+
+        if not pivot_total.empty:
+            children.append(self._render_matrix_table("各运行的文件数量分布", pivot_total, label_order))
+
+        if diff_info_available:
+            diff_df = df[(df["run_type"] == "diff") & (df["diff_info"])]
+            if not diff_df.empty:
+                pivot_added = diff_df.pivot_table(
+                    index="range",
+                    columns="label",
+                    values="added",
+                    aggfunc="sum",
+                    fill_value=0,
+                )
+                pivot_changed = diff_df.pivot_table(
+                    index="range",
+                    columns="label",
+                    values="changed",
+                    aggfunc="sum",
+                    fill_value=0,
+                )
+
+                if not pivot_added.empty:
+                    children.append(
+                        self._render_matrix_table("新增文件分布", pivot_added, label_order)
+                    )
+                if not pivot_changed.empty:
+                    children.append(
+                        self._render_matrix_table("变更文件分布", pivot_changed, label_order)
+                    )
+
+        if len(children) == 1:
+            children.append(
+                widgets.HTML(value="<div style='color:#666;'>暂无可视化数据。</div>")
+            )
+
+        return widgets.VBox(children)
+
+
 # ---------------------------------------------------------------------------
 # Dashboard orchestration
 # ---------------------------------------------------------------------------
@@ -558,6 +884,7 @@ class QuickstartDashboard:
 
 __all__ = [
     "BaseStatistic",
+    "FileCharCountDistributionStatistic",
     "QuickstartDashboard",
     "RecordCountStatistic",
     "RunData",
