@@ -16,17 +16,17 @@ Jupyter looks like::
 
     dashboard = QuickstartDashboard(base_dir="../artifacts")
     dashboard.register_statistic(
-        RecordCountStatistic(
-            name="Files analysed",
-            table_key="commit_files_df",
-            description="Number of files processed for each run",
-        )
+        RecordCountStatistic()
     )
     dashboard.show()
 
 After the dashboard is displayed you can switch between projects, pick a run to
 inspect the statistics of that execution, and check the trend analysis tab for
 historical context.
+
+The bundled :class:`RecordCountStatistic` inspects each run's ``run_type``
+metadata to choose between ``commit_files.csv`` and ``diff_results.csv`` so it
+can report a meaningful row count without any manual configuration.
 """
 
 from __future__ import annotations
@@ -246,15 +246,31 @@ def _stat_card(title: str, value: str, description: str | None = None) -> widget
 
 
 class RecordCountStatistic(BaseStatistic):
-    """Simple statistic that counts the rows of a CSV table."""
+    """Row-count statistic that adapts to snapshot and diff runs automatically."""
 
-    def __init__(self, name: str, table_key: str, description: str | None = None) -> None:
-        self.name = name
-        self.table_key = table_key
-        self.description = description
+    def __init__(self) -> None:
+        self.name = "记录数"
+        self.description = "根据运行类型自动选择表格并统计行数"
+
+    def _resolve_table_key(self, run: RunData) -> Optional[str]:
+        run_type = (run.metadata or {}).get("run_type")
+        if run_type == "snapshot":
+            return "commit_files_df"
+        if run_type == "diff":
+            return "diff_results_df"
+
+        if "commit_files_df" in run.dataframes:
+            return "commit_files_df"
+        if "diff_results_df" in run.dataframes:
+            return "diff_results_df"
+        return None
 
     def _extract(self, run: RunData) -> Optional[int]:
-        df = run.dataframes.get(self.table_key)
+        table_key = self._resolve_table_key(run)
+        if table_key is None:
+            return None
+
+        df = run.dataframes.get(table_key)
         if df is None:
             return None
         return int(df.shape[0])
@@ -300,9 +316,7 @@ class RecordCountStatistic(BaseStatistic):
             display(fig)
             plt.close(fig)
 
-        description = (
-            self.description if self.description is not None else "Row count per run"
-        )
+        description = self.description
         return widgets.VBox(
             [
                 widgets.HTML(
