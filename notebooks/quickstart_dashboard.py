@@ -325,11 +325,17 @@ class QuickstartDashboard:
     def register_statistic(self, stat: BaseStatistic) -> None:
         self.statistics.append(stat)
 
-    def show(self) -> widgets.Widget:
+    def widget(self) -> widgets.Widget:
+        """Return the root widget without triggering an automatic display."""
+
         if self._root is None:
             self._root = self._build()
-        display(self._root)
         return self._root
+
+    def show(self) -> None:
+        """Display the dashboard inside the current notebook output cell."""
+
+        display(self.widget())
 
     def refresh(self) -> None:
         """Reload repository information and update the UI."""
