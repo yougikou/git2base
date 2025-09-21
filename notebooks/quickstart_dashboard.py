@@ -38,9 +38,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence
+import contextlib
+import urllib.request
+import warnings
 
 import ipywidgets as widgets
+import matplotlib
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 import pandas as pd
 from IPython.display import display
 import yaml
@@ -1496,4 +1501,58 @@ __all__ = [
     "RunHistory",
     "TechStackClassifier",
 ]
+
+_CJK_FONT_FAMILY = "Noto Sans CJK SC"
+_CJK_FONT_URLS = (
+    "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
+    "https://fonts.gstatic.com/ea/notosanscjksc/v1/NotoSansCJKsc-Regular.otf",
+)
+
+
+def _ensure_cjk_font() -> Optional[str]:
+    """Ensure a Google CJK font is registered with Matplotlib."""
+
+    try:
+        font_manager.findfont(_CJK_FONT_FAMILY, fallback_to_default=False)
+        return _CJK_FONT_FAMILY
+    except (ValueError, RuntimeError):
+        pass
+
+    cache_dir = Path.home() / ".cache" / "git2base" / "fonts"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    font_path = cache_dir / "NotoSansCJKsc-Regular.otf"
+
+    if not font_path.exists():
+        last_error: Optional[Exception] = None
+        for url in _CJK_FONT_URLS:
+            try:
+                with contextlib.closing(urllib.request.urlopen(url)) as response:
+                    font_path.write_bytes(response.read())
+                break
+            except Exception as exc:  # pragma: no cover - best effort network call
+                last_error = exc
+        else:
+            warnings.warn(
+                "Unable to download CJK font for Matplotlib; charts may miss glyphs."
+                f" Last error: {last_error}",
+                RuntimeWarning,
+            )
+            return None
+
+    try:
+        font_manager.fontManager.addfont(str(font_path))
+    except Exception as exc:  # pragma: no cover - registration failure is unexpected
+        warnings.warn(
+            f"Failed to register CJK font at {font_path}: {exc}",
+            RuntimeWarning,
+        )
+        return None
+
+    return _CJK_FONT_FAMILY
+
+
+_resolved_cjk_font = _ensure_cjk_font()
+if _resolved_cjk_font:
+    matplotlib.rcParams["font.family"] = [_resolved_cjk_font, "DejaVu Sans", "sans-serif"]
+    matplotlib.rcParams["axes.unicode_minus"] = False
 
