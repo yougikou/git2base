@@ -35,6 +35,8 @@ from __future__ import annotations
 
 import json
 import base64
+import types
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,6 +54,7 @@ import pandas as pd
 from IPython.display import display
 import yaml
 import io
+import sys
 
 
 # ---------------------------------------------------------------------------
@@ -547,6 +550,124 @@ def _figure_to_image_widget(
     return widgets.HTML(
         value=f"<img src='data:image/png;base64,{encoded}' style='{style}'/>"
     )
+
+
+def load_statistic_classes_from_notebook(
+    notebook_path: str | Path,
+    *,
+    base_class: type["BaseStatistic"] | None = None,
+) -> Dict[str, type["BaseStatistic"]]:
+    """Execute a notebook and return discovered ``BaseStatistic`` subclasses.
+
+    The helper reads the given ``.ipynb`` file, converts it to a Python
+    script, executes it inside an isolated module namespace, and then returns
+    any classes that inherit from :class:`BaseStatistic`.  This makes it easy
+    to prototype statistics inside notebooks while still reusing the Python
+    classes inside the quickstart dashboard.
+    """
+
+    base_cls = base_class or BaseStatistic
+    path = Path(notebook_path).expanduser().resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"Notebook not found: {path}")
+
+    try:  # pragma: no cover - thin wrapper around external dependency
+        import nbformat
+    except ImportError as exc:  # pragma: no cover - import guard
+        raise RuntimeError(
+            "nbformat is required to load statistics from notebooks. "
+            "Please install it with `pip install nbformat`."
+        ) from exc
+
+    try:  # pragma: no cover - thin wrapper around external dependency
+        from nbconvert import PythonExporter
+    except ImportError as exc:  # pragma: no cover - import guard
+        raise RuntimeError(
+            "nbconvert is required to convert notebooks into Python code. "
+            "Please install it with `pip install nbconvert`."
+        ) from exc
+
+    notebook = nbformat.read(path, as_version=4)
+    code, _ = PythonExporter().from_notebook_node(notebook)
+
+    module_name = f"_nb_stat_{path.stem}_{uuid.uuid4().hex}"
+    module = types.ModuleType(module_name)
+    module.__file__ = str(path)
+    module.__package__ = ""
+    namespace = module.__dict__
+
+    try:  # pragma: no cover - defensive import
+        from IPython import get_ipython as _get_ipython
+    except Exception:  # pragma: no cover - fallback for pure Python usage
+        namespace.setdefault("get_ipython", lambda: None)
+    else:
+        namespace.setdefault("get_ipython", _get_ipython)
+
+    sys.modules[module_name] = module
+
+    parent = str(path.parent)
+    added_to_path = False
+    if parent not in sys.path:
+        sys.path.insert(0, parent)
+        added_to_path = True
+
+    try:
+        exec(compile(code, str(path), "exec"), namespace)
+    finally:
+        if added_to_path:
+            with contextlib.suppress(ValueError):
+                sys.path.remove(parent)
+
+    subclasses: Dict[str, type[BaseStatistic]] = {}
+    for name, obj in namespace.items():
+        if (
+            isinstance(obj, type)
+            and issubclass(obj, base_cls)
+            and obj is not base_cls
+        ):
+            subclasses[name] = obj
+
+    if not subclasses:
+        raise ValueError(
+            f"No subclasses of {base_cls.__name__} found in {path.name}."
+        )
+
+    return subclasses
+
+
+def load_statistic_from_notebook(
+    notebook_path: str | Path,
+    *,
+    class_name: str | None = None,
+    base_class: type["BaseStatistic"] | None = None,
+) -> type["BaseStatistic"]:
+    """Convenience wrapper that returns a single statistic class.
+
+    If ``class_name`` is omitted the helper expects the notebook to define
+    exactly one subclass of :class:`BaseStatistic`.  If multiple classes are
+    present you can pass ``class_name`` to select the desired one explicitly.
+    """
+
+    subclasses = load_statistic_classes_from_notebook(
+        notebook_path,
+        base_class=base_class,
+    )
+
+    if class_name is None:
+        if len(subclasses) == 1:
+            return next(iter(subclasses.values()))
+        available = ", ".join(sorted(subclasses))
+        raise ValueError(
+            "Multiple statistics found. Specify class_name from: " + available
+        )
+
+    try:
+        return subclasses[class_name]
+    except KeyError as exc:
+        available = ", ".join(sorted(subclasses))
+        raise KeyError(
+            f"Statistic {class_name!r} not found. Available: {available}"
+        ) from exc
 
 
 class RecordCountStatistic(BaseStatistic):
@@ -1578,6 +1699,8 @@ __all__ = [
     "BaseStatistic",
     "DiffFileChangeCountStatistic",
     "FileCharCountDistributionStatistic",
+    "load_statistic_classes_from_notebook",
+    "load_statistic_from_notebook",
     "QuickstartDashboard",
     "RecordCountStatistic",
     "RunData",
