@@ -1026,18 +1026,25 @@ class FileCharCountDistributionStatistic(BaseStatistic):
 @dataclass
 class _StackPage:
     stack: str
-    single_run_selector: widgets.Dropdown
-    trend_run_selector: widgets.SelectMultiple
-    single_container: widgets.Box
-    trend_container: widgets.Box
-    tab: widgets.Tab
+    container: widgets.Box
+
+
+@dataclass
+class _TrendPage:
+    stack_selector: widgets.Dropdown
+    statistic_selector: widgets.Dropdown
+    run_type_selector: widgets.Dropdown
+    run_selector: widgets.SelectMultiple
+    output_container: widgets.Box
     container: widgets.VBox
 
 
 @dataclass
 class _RepoPage:
     repo: str
+    run_selector: widgets.Dropdown
     stack_pages: List[_StackPage]
+    trend_page: _TrendPage
     tab: widgets.Tab
     container: widgets.VBox
     history: Optional[RunHistory] = None
@@ -1110,76 +1117,155 @@ class QuickstartDashboard:
 
     def _create_repo_page(self, repo: str) -> _RepoPage:
         runs = self.loader.list_runs(repo)
+
+        run_selector = widgets.Dropdown(
+            options=runs,
+            description="Run:",
+            layout=widgets.Layout(width="60%"),
+        )
+        if runs:
+            run_selector.value = runs[0]
+            run_selector.disabled = False
+        else:
+            run_selector.options = []
+            run_selector.value = None
+            run_selector.disabled = True
+
         stack_pages: List[_StackPage] = []
-
         for stack in self.stack_classifier.stack_labels:
-            single_selector = widgets.Dropdown(
-                options=runs,
-                description="Run:",
-                layout=widgets.Layout(width="60%"),
-            )
-            trend_selector = widgets.SelectMultiple(
-                options=runs,
-                description="Runs:",
-                layout=widgets.Layout(width="60%", height="120px"),
-            )
-
-            single_container = widgets.Box(
+            container = widgets.Box(
                 layout=widgets.Layout(display="flex", flex_flow="row wrap")
             )
-            trend_container = widgets.Box(
-                layout=widgets.Layout(display="flex", flex_flow="column")
-            )
-
-            single_panel = widgets.VBox(
-                [single_selector, single_container], layout=widgets.Layout(gap="12px")
-            )
-            trend_panel = widgets.VBox(
-                [trend_selector, trend_container], layout=widgets.Layout(gap="12px")
-            )
-
-            tabs = widgets.Tab(children=[single_panel, trend_panel])
-            tabs.set_title(0, "单次执行统计")
-            tabs.set_title(1, "趋势分析")
-
-            container = widgets.VBox([tabs])
             stack_pages.append(
                 _StackPage(
                     stack=stack,
-                    single_run_selector=single_selector,
-                    trend_run_selector=trend_selector,
-                    single_container=single_container,
-                    trend_container=trend_container,
-                    tab=tabs,
                     container=container,
                 )
             )
 
-        tab = widgets.Tab(children=[page.container for page in stack_pages])
-        for index, stack_page in enumerate(stack_pages):
+        stack_selector = widgets.Dropdown(
+            options=self.stack_classifier.stack_labels,
+            description="技术栈:",
+            layout=widgets.Layout(width="220px"),
+        )
+
+        if self.statistics:
+            statistic_options = [
+                (
+                    getattr(stat, "name", stat.__class__.__name__),
+                    stat,
+                )
+                for stat in self.statistics
+            ]
+            statistic_selector = widgets.Dropdown(
+                options=statistic_options,
+                description="统计种类:",
+                layout=widgets.Layout(width="240px"),
+            )
+        else:
+            statistic_selector = widgets.Dropdown(
+                options=[("暂无统计", None)],
+                description="统计种类:",
+                layout=widgets.Layout(width="240px"),
+                disabled=True,
+            )
+
+        run_type_selector = widgets.Dropdown(
+            options=[("Snapshot", "snapshot"), ("Diff", "diff")],
+            description="执行类型:",
+            layout=widgets.Layout(width="200px"),
+        )
+
+        trend_run_selector = widgets.SelectMultiple(
+            options=[],
+            description="Run:",
+            layout=widgets.Layout(width="60%", height="160px"),
+            disabled=True,
+        )
+
+        trend_output = widgets.Box(
+            layout=widgets.Layout(display="flex", flex_flow="column")
+        )
+
+        controls_row = widgets.HBox(
+            [stack_selector, statistic_selector, run_type_selector],
+            layout=widgets.Layout(flex_flow="row wrap", gap="12px"),
+        )
+        controls = widgets.VBox(
+            [controls_row, trend_run_selector], layout=widgets.Layout(gap="8px")
+        )
+        trend_container = widgets.VBox(
+            [controls, trend_output], layout=widgets.Layout(gap="12px")
+        )
+
+        tab_children: List[widgets.Widget] = []
+        if stack_pages:
+            tab_children.append(stack_pages[0].container)
+        tab_children.append(trend_container)
+        for stack_page in stack_pages[1:]:
+            tab_children.append(stack_page.container)
+
+        tab = widgets.Tab(children=tab_children)
+        if stack_pages:
+            tab.set_title(0, stack_pages[0].stack)
+            start_index = 2
+        else:
+            start_index = 1
+        tab.set_title(1 if stack_pages else 0, "趋势分析")
+        for index, stack_page in enumerate(stack_pages[1:], start=start_index):
             tab.set_title(index, stack_page.stack)
 
-        container = widgets.VBox([tab])
+        container = widgets.VBox([run_selector, tab], layout=widgets.Layout(gap="12px"))
+
+        trend_page = _TrendPage(
+            stack_selector=stack_selector,
+            statistic_selector=statistic_selector,
+            run_type_selector=run_type_selector,
+            run_selector=trend_run_selector,
+            output_container=trend_output,
+            container=trend_container,
+        )
+
         page = _RepoPage(
             repo=repo,
+            run_selector=run_selector,
             stack_pages=stack_pages,
+            trend_page=trend_page,
             tab=tab,
             container=container,
         )
 
         self._initialize_repo_page(page)
 
-        for stack_page in stack_pages:
-            def _on_single_change(change: dict, sp: _StackPage = stack_page) -> None:
-                if change.get("name") == "value":
-                    self._update_stack_single_statistics(page, sp)
+        def _on_run_change(change: dict) -> None:
+            if change.get("name") == "value":
+                self._update_repo_single_statistics(page)
 
-            def _on_trend_change(change: dict, sp: _StackPage = stack_page) -> None:
-                if change.get("name") == "value":
-                    self._update_stack_trend_statistics(page, sp)
+        run_selector.observe(_on_run_change, names="value")
 
-            stack_page.single_run_selector.observe(_on_single_change, names="value")
-            stack_page.trend_run_selector.observe(_on_trend_change, names="value")
+        def _on_stack_change(change: dict) -> None:
+            if change.get("name") == "value":
+                self._update_trend_statistics(page)
+
+        stack_selector.observe(_on_stack_change, names="value")
+
+        def _on_stat_change(change: dict) -> None:
+            if change.get("name") == "value":
+                self._update_trend_statistics(page)
+
+        statistic_selector.observe(_on_stat_change, names="value")
+
+        def _on_run_type_change(change: dict) -> None:
+            if change.get("name") == "value":
+                self._update_trend_run_options(page)
+
+        run_type_selector.observe(_on_run_type_change, names="value")
+
+        def _on_trend_runs_change(change: dict) -> None:
+            if change.get("name") == "value":
+                self._update_trend_statistics(page)
+
+        trend_run_selector.observe(_on_trend_runs_change, names="value")
 
         return page
 
@@ -1189,21 +1275,52 @@ class QuickstartDashboard:
         page.history = self.loader.load_history(page.repo)
         runs = [run.run for run in (page.history.runs if page.history else [])]
 
-        for stack_page in page.stack_pages:
-            stack_page.single_run_selector.options = runs
-            stack_page.trend_run_selector.options = runs
+        run_selector = page.run_selector
+        run_selector.options = runs
+        if runs:
+            run_selector.disabled = False
+            if run_selector.value not in runs:
+                run_selector.value = runs[0]
+            self._update_repo_single_statistics(page)
+        else:
+            run_selector.disabled = True
+            run_selector.value = None
+            self._update_repo_single_statistics(page)
 
-            if runs:
-                if stack_page.single_run_selector.value not in runs:
-                    stack_page.single_run_selector.value = runs[0]
-                if not stack_page.trend_run_selector.value:
-                    stack_page.trend_run_selector.value = tuple(runs)
-            else:
-                stack_page.single_run_selector.value = None
-                stack_page.trend_run_selector.value = ()
+        trend_page = page.trend_page
+        has_runs = bool(runs)
+        trend_page.run_type_selector.disabled = not has_runs
+        trend_page.run_selector.disabled = not has_runs
 
-            self._update_stack_single_statistics(page, stack_page)
-            self._update_stack_trend_statistics(page, stack_page)
+        if has_runs:
+            available_types = {
+                (run.metadata or {}).get("run_type") for run in page.history.runs
+            }
+            option_values: List[str] = []
+            for option in trend_page.run_type_selector.options:
+                if isinstance(option, (tuple, list)):
+                    option_values.append(option[1])
+                else:
+                    option_values.append(option)
+
+            selected_type = trend_page.run_type_selector.value
+            if selected_type not in option_values and option_values:
+                selected_type = option_values[0]
+
+            if available_types:
+                for value in option_values:
+                    if value in available_types:
+                        selected_type = value
+                        break
+
+            trend_page.run_type_selector.value = selected_type
+            self._update_trend_run_options(page)
+        else:
+            trend_page.run_selector.options = []
+            trend_page.run_selector.value = ()
+            trend_page.output_container.children = (
+                widgets.HTML(value="<div style='color:#666;'>无可展示的历史数据。</div>"),
+            )
 
     def _resolve_run(self, page: _RepoPage, run_name: str) -> Optional[RunData]:
         run_data: Optional[RunData] = None
@@ -1236,10 +1353,14 @@ class QuickstartDashboard:
             selected_stack=stack,
         )
 
+    def _update_repo_single_statistics(self, page: _RepoPage) -> None:
+        for stack_page in page.stack_pages:
+            self._update_stack_single_statistics(page, stack_page)
+
     def _update_stack_single_statistics(self, page: _RepoPage, stack_page: _StackPage) -> None:
-        run_name = stack_page.single_run_selector.value
+        run_name = page.run_selector.value
         if not run_name:
-            stack_page.single_container.children = (
+            stack_page.container.children = (
                 widgets.HTML(value="<div style='color:#666;'>请选择一个运行。</div>"),
             )
             return
@@ -1247,7 +1368,7 @@ class QuickstartDashboard:
         run_data = self._resolve_run(page, run_name)
 
         if run_data is None:
-            stack_page.single_container.children = (
+            stack_page.container.children = (
                 widgets.HTML(
                     value="<div style='color:#d33;'>无法加载该运行的结果，请检查文件是否存在。</div>"
                 ),
@@ -1262,44 +1383,106 @@ class QuickstartDashboard:
                     value="<div style='color:#666;'>暂无统计卡片，请通过 register_statistic 添加。</div>"
                 )
             ]
-        stack_page.single_container.children = tuple(single_widgets)
+        stack_page.container.children = tuple(single_widgets)
 
-    def _update_stack_trend_statistics(self, page: _RepoPage, stack_page: _StackPage) -> None:
-        if page.history is None:
-            stack_page.trend_container.children = (
+    def _update_trend_run_options(self, page: _RepoPage) -> None:
+        trend_page = page.trend_page
+
+        if page.history is None or not page.history.runs:
+            trend_page.run_selector.options = []
+            trend_page.run_selector.value = ()
+            trend_page.run_selector.disabled = True
+            trend_page.output_container.children = (
                 widgets.HTML(value="<div style='color:#666;'>无可展示的历史数据。</div>"),
             )
             return
 
-        selected_runs = list(stack_page.trend_run_selector.value or [])
+        run_type = trend_page.run_type_selector.value
+        available_runs = [
+            run.run
+            for run in page.history.runs
+            if (run.metadata or {}).get("run_type") == run_type
+        ]
+
+        selector = trend_page.run_selector
+        selector.options = available_runs
+
+        if not available_runs:
+            selector.disabled = True
+            selector.value = ()
+            trend_page.output_container.children = (
+                widgets.HTML(value="<div style='color:#666;'>所选执行类型没有可用运行。</div>"),
+            )
+            return
+
+        selector.disabled = False
+        current_selection = tuple(value for value in selector.value if value in available_runs)
+        if not current_selection:
+            selector.value = tuple(available_runs)
+        else:
+            selector.value = current_selection
+
+        self._update_trend_statistics(page)
+
+    def _update_trend_statistics(self, page: _RepoPage) -> None:
+        trend_page = page.trend_page
+
+        if page.history is None or not page.history.runs:
+            trend_page.output_container.children = (
+                widgets.HTML(value="<div style='color:#666;'>无可展示的历史数据。</div>"),
+            )
+            return
+
+        if trend_page.statistic_selector.disabled or not self.statistics:
+            trend_page.output_container.children = (
+                widgets.HTML(value="<div style='color:#666;'>暂无趋势统计，请通过 register_statistic 添加。</div>"),
+            )
+            return
+
+        statistic = trend_page.statistic_selector.value
+        if statistic is None:
+            trend_page.output_container.children = (
+                widgets.HTML(value="<div style='color:#666;'>请选择要展示的统计种类。</div>"),
+            )
+            return
+
+        selected_runs = list(trend_page.run_selector.value or [])
         if not selected_runs:
-            stack_page.trend_container.children = (
+            trend_page.output_container.children = (
                 widgets.HTML(value="<div style='color:#666;'>请选择至少一个运行以展示趋势。</div>"),
             )
             return
 
-        selected = set(selected_runs)
-        filtered_runs = [run for run in page.history.runs if run.run in selected]
+        run_type = trend_page.run_type_selector.value
+        selected_set = set(selected_runs)
+        filtered_runs = [
+            run
+            for run in page.history.runs
+            if run.run in selected_set
+            and (run.metadata or {}).get("run_type") == run_type
+        ]
+
         if not filtered_runs:
-            stack_page.trend_container.children = (
+            trend_page.output_container.children = (
                 widgets.HTML(value="<div style='color:#666;'>所选运行没有历史数据。</div>"),
             )
             return
 
+        stack_label = trend_page.stack_selector.value or self.stack_classifier.all_label
         stack_filtered_runs = [
-            self._filter_run_by_stack(run, stack_page.stack) for run in filtered_runs
+            self._filter_run_by_stack(run, stack_label) for run in filtered_runs
         ]
         filtered_history = RunHistory(repo=page.repo, runs=stack_filtered_runs)
         filtered_history.ensure_sorted()
 
-        trend_widgets = [stat.render_trend(filtered_history) for stat in self.statistics]
-        if not trend_widgets:
-            trend_widgets = [
-                widgets.HTML(
-                    value="<div style='color:#666;'>暂无趋势统计，请通过 register_statistic 添加。</div>"
-                )
-            ]
-        stack_page.trend_container.children = tuple(trend_widgets)
+        if not filtered_history.runs:
+            trend_page.output_container.children = (
+                widgets.HTML(value="<div style='color:#666;'>所选技术栈暂无可展示的数据。</div>"),
+            )
+            return
+
+        widget = statistic.render_trend(filtered_history)
+        trend_page.output_container.children = (widget,)
 
 
 __all__ = [
