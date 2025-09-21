@@ -34,8 +34,9 @@ can report a meaningful row count without any manual configuration.
 from __future__ import annotations
 
 import json
+import base64
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence
 import contextlib
@@ -44,11 +45,13 @@ import warnings
 
 import ipywidgets as widgets
 import matplotlib
+import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
 import pandas as pd
 from IPython.display import display
 import yaml
+import io
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +254,46 @@ def _parse_run_timestamp(name: str) -> Optional[datetime]:
     return None
 
 
+def _parse_metadata_timestamp(value: object) -> Optional[datetime]:
+    """Parse timestamps stored in run metadata (e.g. ``ended_at``)."""
+
+    if not value:
+        return None
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1]
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            # Fall back to common layouts if ``fromisoformat`` fails.
+            for pattern in (
+                "%Y-%m-%dT%H:%M:%S",
+                "%Y-%m-%d %H:%M:%S",
+            ):
+                try:
+                    parsed = datetime.strptime(text, pattern)
+                    break
+                except ValueError:
+                    continue
+            else:
+                return None
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
+
+    if isinstance(value, datetime):
+        parsed = value
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
+
+    return None
+
+
 @dataclass
 class RunData:
     """Container for the CSV data that belongs to a single analysis run."""
@@ -261,14 +304,31 @@ class RunData:
     metadata: Dict[str, object]
     dataframes: Dict[str, pd.DataFrame]
     timestamp: Optional[datetime]
+    ended_at: Optional[datetime] = None
     selected_stack: Optional[str] = None
 
     @property
     def display_label(self) -> str:
         """Human friendly representation for displaying this run in charts."""
 
-        if self.timestamp is not None:
-            return self.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        source = self.ended_at or self.timestamp
+        if source is not None:
+            return source.strftime("%Y-%m-%d %H:%M:%S")
+        return self.run
+
+    @property
+    def trend_timestamp(self) -> Optional[datetime]:
+        """Preferred timestamp for chronological charts and sorting."""
+
+        return self.ended_at or self.timestamp
+
+    @property
+    def trend_label(self) -> str:
+        """Human readable label for chart axes (defaults to date)."""
+
+        ts = self.trend_timestamp
+        if ts is not None:
+            return ts.strftime("%Y-%m-%d")
         return self.run
 
 
@@ -282,7 +342,11 @@ class RunHistory:
     def ensure_sorted(self) -> None:
         """Sort runs chronologically (oldest first)."""
 
-        self.runs.sort(key=lambda r: (r.timestamp or datetime.min, r.run))
+        def _sort_key(run: RunData) -> tuple[datetime, str]:
+            ts = run.trend_timestamp or datetime.min
+            return (ts, run.run)
+
+        self.runs.sort(key=_sort_key)
 
 
 class RunDataLoader:
@@ -333,6 +397,7 @@ class RunDataLoader:
 
         metadata = self._load_run_metadata(repo, run)
         run_timestamp = _parse_run_timestamp(run)
+        ended_at = _parse_metadata_timestamp(metadata.get("ended_at"))
         return RunData(
             repo=repo,
             run=run,
@@ -340,6 +405,7 @@ class RunDataLoader:
             metadata=metadata,
             dataframes=dataframes,
             timestamp=run_timestamp,
+            ended_at=ended_at,
         )
 
     def load_history(
@@ -356,13 +422,15 @@ class RunDataLoader:
             if eager:
                 run_data = self.load_run(repo, run_name)
             else:
+                metadata = self._load_run_metadata(repo, run_name)
                 run_data = RunData(
                     repo=repo,
                     run=run_name,
                     path=self.base_dir / repo / "runs" / run_name / "data",
-                    metadata=self._load_run_metadata(repo, run_name),
+                    metadata=metadata,
                     dataframes={},
                     timestamp=_parse_run_timestamp(run_name),
+                    ended_at=_parse_metadata_timestamp(metadata.get("ended_at")),
                 )
             if run_data is not None:
                 history.runs.append(run_data)
@@ -464,6 +532,23 @@ def _stat_card(title: str, value: str, description: str | None = None) -> widget
     )
 
 
+def _figure_to_image_widget(
+    fig: plt.Figure, *, max_width: str = "640px"
+) -> widgets.HTML:
+    """Convert a Matplotlib figure into an embeddable HTML image widget."""
+
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format="png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    style = (
+        "display:block;width:100%;max-width:" + max_width + ";margin:0 auto;"
+    )
+    return widgets.HTML(
+        value=f"<img src='data:image/png;base64,{encoded}' style='{style}'/>"
+    )
+
+
 class RecordCountStatistic(BaseStatistic):
     """Row-count statistic that adapts to snapshot and diff runs automatically."""
 
@@ -502,13 +587,15 @@ class RecordCountStatistic(BaseStatistic):
     def render_trend(self, history: RunHistory) -> widgets.Widget:
         records: List[dict[str, object]] = []
         for run in history.runs:
+            timestamp = run.trend_timestamp
+            if timestamp is None:
+                continue
             value = self._extract(run)
             if value is not None:
                 records.append(
                     {
-                        "label": run.display_label,
                         "value": value,
-                        "timestamp": run.timestamp,
+                        "timestamp": timestamp,
                     }
                 )
 
@@ -526,23 +613,20 @@ class RecordCountStatistic(BaseStatistic):
         df = pd.DataFrame(records)
         df.sort_values(by="timestamp", inplace=True)
 
-        output = widgets.Output()
-        with output:
-            fig, ax = plt.subplots(figsize=(6, 3))
-            ax.plot(df["label"], df["value"], marker="o")
-            ax.set_title(self.name)
-            ax.set_xlabel("Run")
-            ax.set_ylabel("Count")
-            ax.grid(True, linestyle="--", alpha=0.3)
-            plt.xticks(rotation=30, ha="right")
-            plt.tight_layout()
-            display(fig)
-            plt.close(fig)
+        fig, ax = plt.subplots(figsize=(6, 3))
+        ax.plot(df["timestamp"], df["value"], marker="o")
+        ax.set_title(self.name)
+        ax.set_xlabel("日期")
+        ax.set_ylabel("记录数")
+        ax.grid(True, linestyle="--", alpha=0.3)
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
+        fig.autofmt_xdate()
+        chart = _figure_to_image_widget(fig)
 
         return _card_container(
             self.name,
             description=self.description,
-            body_widgets=output,
+            body_widgets=chart,
             min_width="320px",
             flex="1 1 100%",
         )
@@ -623,13 +707,15 @@ class DiffFileChangeCountStatistic(BaseStatistic):
     def render_trend(self, history: RunHistory) -> widgets.Widget:
         records: List[dict[str, object]] = []
         for run in history.runs:
+            timestamp = run.trend_timestamp
+            if timestamp is None:
+                continue
             counts = self._extract(run)
             if counts is None:
                 continue
             records.append(
                 {
-                    "label": run.display_label,
-                    "timestamp": run.timestamp,
+                    "timestamp": timestamp,
                     "added": counts["added"],
                     "changed": counts["changed"],
                     "deleted": counts["deleted"],
@@ -648,26 +734,23 @@ class DiffFileChangeCountStatistic(BaseStatistic):
         df = pd.DataFrame(records)
         df.sort_values(by="timestamp", inplace=True)
 
-        output = widgets.Output()
-        with output:
-            fig, ax = plt.subplots(figsize=(6, 3))
-            ax.plot(df["label"], df["added"], marker="o", label="新增")
-            ax.plot(df["label"], df["changed"], marker="o", label="变更")
-            ax.plot(df["label"], df["deleted"], marker="o", label="删除")
-            ax.set_title(self.name)
-            ax.set_xlabel("Run")
-            ax.set_ylabel("数量")
-            ax.grid(True, linestyle="--", alpha=0.3)
-            plt.xticks(rotation=30, ha="right")
-            ax.legend()
-            plt.tight_layout()
-            display(fig)
-            plt.close(fig)
+        fig, ax = plt.subplots(figsize=(6, 3))
+        ax.plot(df["timestamp"], df["added"], marker="o", label="新增")
+        ax.plot(df["timestamp"], df["changed"], marker="o", label="变更")
+        ax.plot(df["timestamp"], df["deleted"], marker="o", label="删除")
+        ax.set_title(self.name)
+        ax.set_xlabel("日期")
+        ax.set_ylabel("数量")
+        ax.grid(True, linestyle="--", alpha=0.3)
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
+        ax.legend()
+        fig.autofmt_xdate()
+        chart = _figure_to_image_widget(fig)
 
         return _card_container(
             self.name,
             description=self.description,
-            body_widgets=output,
+            body_widgets=chart,
             min_width="320px",
             flex="1 1 100%",
         )
@@ -929,7 +1012,7 @@ class FileCharCountDistributionStatistic(BaseStatistic):
             if summary is None:
                 continue
 
-            label = run.display_label
+            label = run.trend_label
             if label not in seen_labels:
                 label_order.append(label)
                 seen_labels.add(label)
@@ -1355,6 +1438,7 @@ class QuickstartDashboard:
             metadata=metadata,
             dataframes=dataframes,
             timestamp=run.timestamp,
+            ended_at=run.ended_at,
             selected_stack=stack,
         )
 
