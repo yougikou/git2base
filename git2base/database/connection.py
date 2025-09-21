@@ -12,38 +12,20 @@ engine = None
 Session = None
 
 
-def init_output(mode = None, name = None) -> Engine | None:
+def init_output(
+    mode: str | None = None, run_dir_data: str | None = None
+) -> Engine | None:
     """Initialize SQLAlchemy database connection"""
-    global engine, Session
+    global engine, Session, current_csv_path
 
     config = load_output_config()
 
     db_url = ""
     if config["type"] == "csv":
-        if not mode:
+        if not mode or not run_dir_data:
             return None
 
-        # 获取当前时间戳
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-
-        # 获取 repo 参数：支持 --repo= 和 --repo /path/to/repo 两种方式
-        try:
-            if "--repo" in sys.argv:
-                repo_index = sys.argv.index("--repo")
-                repo_path = sys.argv[repo_index + 1]
-                repo_name = os.path.basename(os.path.abspath(repo_path))
-            else:
-                raise ValueError("No --repo argument found")
-        except Exception:
-            repo_name = "unknown"
-        if name:
-            output_dir = os.path.join(config["csv"]["path"], repo_name, f"{mode}_{name}_{timestamp}")
-        else:
-            output_dir = os.path.join(config["csv"]["path"], repo_name, f"{mode}_{timestamp}")
-        os.makedirs(output_dir, exist_ok=True)
-
-        # 更新 config 中的 csv path 为新目录
-        config["csv"]["path"] = output_dir
+        os.makedirs(run_dir_data, exist_ok=True)
 
         return None
     elif config["type"] == "postgresql":
@@ -69,6 +51,11 @@ def init_output(mode = None, name = None) -> Engine | None:
     atexit.register(close_db)
 
     print(f"Database connected: {db_url}")
+
+    from git2base.database.model import create_tables
+
+    create_tables(engine)
+
     return engine
 
 

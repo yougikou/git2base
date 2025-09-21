@@ -6,12 +6,13 @@ from pygit2.repository import Repository
 from sqlalchemy.exc import IntegrityError
 from tqdm import tqdm
 from typing import cast
-
+import os, json
+from datetime import datetime, timezone
+from typing import Protocol, Callable, Any
 
 from git2base.analyzers import load_and_register_analyzers
 from git2base.database import (
     init_output,
-    create_tables,
     reset_tables,
     insert_analysis_results,
     insert_commits,
@@ -25,11 +26,174 @@ from git2base.git import (
     parse_short_hash,
     write_csv,
 )
-from git2base.config import LOGGER_GIT2BASE, get_logger, load_output_config
+from git2base.config import (
+    LOGGER_GIT2BASE,
+    get_logger,
+    load_output_config,
+    get_executable_dir,
+)
 
 
 output_config = load_output_config()
 logger = get_logger(LOGGER_GIT2BASE)
+run_dir_data: str | None = None
+
+
+class RunMetaProducer(Protocol):
+    def project_metadata(
+        self,
+        *,
+        artifacts_root: str,
+        project: str,
+        mode: str,
+        branch: str,
+        base: str,
+        target: str,
+        repo_path: str,
+    ) -> dict: ...
+
+    def run_metadata(
+        self,
+        *,
+        artifacts_root: str,
+        project: str,
+        run_id: str,
+        mode: str,
+        branch: str,
+        base: str,
+        target: str,
+        repo_path: str,
+    ) -> dict: ...
+
+
+def _ensure_dir(p: str):
+    os.makedirs(p, exist_ok=True)
+
+
+def _atomic_write_json(path: str, obj: dict):
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
+def _load_projects_json(project_dir: str) -> dict:
+    pj = os.path.join(project_dir, "project.json")
+    if os.path.exists(pj):
+        with open(pj, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def _compute_run_layout(
+    *,
+    artifacts_root: str,
+    project: str,
+    mode: str,
+    base: str,
+    target: str,
+) -> tuple[str, str, str]:
+    """Compute run_id and standard directory layout without writing metadata."""
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    short = (target or base or "run")[:7]
+    run_id = f"{mode}_{ts}-{short}"
+    project_dir = os.path.join(artifacts_root, project)
+    run_dir = os.path.join(project_dir, "runs", run_id)
+    data_dir = os.path.join(run_dir, "data")
+    for d in (project_dir, os.path.dirname(run_dir), run_dir, data_dir):
+        _ensure_dir(d)
+    return run_id, project_dir, run_dir
+
+
+class DefaultRunMetaProducer:
+    def project_metadata(
+        self,
+        *,
+        artifacts_root: str,
+        project: str,
+        mode: str,
+        branch: str,
+        base: str,
+        target: str,
+        repo_path: str,
+    ) -> dict:
+        # Minimal default: no extra fields beyond core-managed ones.
+        return {"title": project}
+
+    def run_metadata(
+        self,
+        *,
+        artifacts_root: str,
+        project: str,
+        run_id: str,
+        mode: str,
+        branch: str,
+        base: str,
+        target: str,
+        repo_path: str,
+    ) -> dict:
+        # Minimal default: allow plugin users to enrich later if desired
+        return {}
+
+
+def load_runmeta_plugin() -> RunMetaProducer:
+    """Load a metadata producer plugin.
+
+    The environment variable `GIT2BASE_RUNMETA_PLUGIN` should point to
+    `module:attr`. The attribute can be:
+      - an object implementing `project_metadata` and `run_metadata`
+      - a zero-arg callable returning such an object (factory or class)
+    If unset, a default producer is used.
+    """
+    spec = os.environ.get("GIT2BASE_RUNMETA_PLUGIN")
+    if spec:
+        mod, attr = spec.split(":", 1)
+        m = __import__(mod, fromlist=[attr])
+        obj: Any = getattr(m, attr)
+        candidate = obj() if callable(obj) else obj
+        if hasattr(candidate, "project_metadata") and hasattr(candidate, "run_metadata"):
+            return candidate  # type: ignore[return-value]
+        raise TypeError(
+            "Invalid GIT2BASE_RUNMETA_PLUGIN: must provide object or factory with project_metadata/run_metadata"
+        )
+
+    # Auto-discovery from ./plugins next to executable (portable distribution)
+    try:
+        base_dir = get_executable_dir()
+        plugins_dir = os.path.join(base_dir, "plugins")
+        if os.path.isdir(plugins_dir):
+            if plugins_dir not in sys.path:
+                sys.path.insert(0, plugins_dir)
+            # Try common module names and attributes
+            module_candidates = ["runmeta", "runmeta_plugin", "g2b_runmeta"]
+            attr_candidates = ["producer", "make", "get_producer", "RunMetaProducer", "Plugin"]
+            for mod_name in module_candidates:
+                try:
+                    m = __import__(mod_name)
+                except Exception:
+                    continue
+                for attr in attr_candidates:
+                    if hasattr(m, attr):
+                        obj: Any = getattr(m, attr)
+                        candidate = obj() if callable(obj) else obj
+                        if hasattr(candidate, "project_metadata") and hasattr(candidate, "run_metadata"):
+                            return candidate  # type: ignore[return-value]
+            # Fallback: if module itself exposes the two functions at top-level
+            for mod_name in module_candidates:
+                try:
+                    m = __import__(mod_name)
+                except Exception:
+                    continue
+                if hasattr(m, "project_metadata") and hasattr(m, "run_metadata"):
+                    class _Wrap:
+                        project_metadata = staticmethod(getattr(m, "project_metadata"))
+                        run_metadata = staticmethod(getattr(m, "run_metadata"))
+                    return _Wrap()  # type: ignore[return-value]
+    except Exception:
+        # Silent fallback to default if discovery fails
+        pass
+
+    return DefaultRunMetaProducer()
 
 
 def commit_exec(
@@ -69,17 +233,23 @@ def commit_exec(
     commit_data = snapshot_wrapped.get_db_commit()
     commit_files_data = snapshot_wrapped.get_db_commit_files()
 
+    # Resolve CSV base path to current run's data directory when in CSV mode
+    if not run_dir_data:
+        raise RuntimeError(
+            "Run directory data path is not initialized. Please call init_output() first."
+        )
+
     if output_config["type"] == "csv":
         logger.debug("Write commit data")
         write_csv(
             [commit_data.to_dict()],
-            f"{output_config['csv']['path']}/commits.csv",
+            os.path.join(run_dir_data, "commits.csv"),
             False,
         )
         logger.debug("Write commit file data")
         write_csv(
             [f.to_dict() for f in commit_files_data],
-            f"{output_config['csv']['path']}/commit_files.csv",
+            os.path.join(run_dir_data, "commit_files.csv"),
             False,
         )
     else:
@@ -111,7 +281,7 @@ def commit_exec(
                 logger.debug(f"Write analysis results of file {file.path}")
                 write_csv(
                     rows,
-                    f"{output_config['csv']['path']}/analysis_results.csv",
+                    os.path.join(run_dir_data, "analysis_results.csv"),
                     append_mode,
                 )
                 if rows:
@@ -187,17 +357,24 @@ def diff_branch_commit_exec(
     )
     commits_data = diff_wrapped.get_db_commits()
     diff_results_data = diff_wrapped.get_db_diff_results()
+
+    # Resolve CSV base path to current run's data directory when in CSV mode
+    if not run_dir_data:
+        raise RuntimeError(
+            "Run directory data path is not initialized. Please call init_output() first."
+        )
+
     if output_config["type"] == "csv":
         logger.debug("Write commit data")
         write_csv(
             [f.to_dict() for f in commits_data],
-            f"{output_config['csv']['path']}/commits.csv",
+            os.path.join(run_dir_data, "commits.csv"),
             False,
         )
         logger.debug("Write diff results data")
         write_csv(
             [f.to_dict() for f in diff_results_data],
-            f"{output_config['csv']['path']}/diff_results.csv",
+            os.path.join(run_dir_data, "diff_results.csv"),
             False,
         )
     else:
@@ -235,7 +412,7 @@ def diff_branch_commit_exec(
                 )
                 write_csv(
                     rows,
-                    f"{output_config['csv']['path']}/analysis_results.csv",
+                    os.path.join(run_dir_data, "analysis_results.csv"),
                     append_mode,
                 )
                 if rows:
@@ -256,6 +433,65 @@ def diff_branch_commit_exec(
             pbar.refresh()
 
     logger.info("All files analyzed and processed")
+
+
+def _finalize_run_metadata(run_dir: str):
+    """Finalize metadata after a successful run.
+
+    - Adds status and end timestamp to run.json
+    - Lists produced CSV files under data/
+    - Updates the matching run record in project.json with completion info
+    """
+    try:
+        data_dir = os.path.join(run_dir, "data")
+        data_files = []
+        if os.path.isdir(data_dir):
+            for name in sorted(os.listdir(data_dir)):
+                if name.lower().endswith(".csv"):
+                    data_files.append(os.path.join("data", name))
+
+        # Update run.json
+        run_json_path = os.path.join(run_dir, "run.json")
+        if os.path.exists(run_json_path):
+            with open(run_json_path, "r", encoding="utf-8") as f:
+                run_json = json.load(f)
+        else:
+            run_json = {}
+
+        run_json["status"] = "success"
+        run_json["ended_at"] = (
+            datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
+        )
+        run_json["data_files"] = data_files
+        _atomic_write_json(run_json_path, run_json)
+
+        # Update project.json entry for this run
+        project_dir = os.path.dirname(os.path.dirname(run_dir))
+        project_json_path = os.path.join(project_dir, "project.json")
+        if os.path.exists(project_json_path):
+            with open(project_json_path, "r", encoding="utf-8") as f:
+                project_json = json.load(f)
+        else:
+            project_json = {}
+
+        runs = project_json.get("runs", [])
+        # Find the run by id
+        run_id = os.path.basename(run_dir)
+        for r in runs:
+            if r.get("run_id") == run_id:
+                r["status"] = "success"
+                r["completed_at"] = (
+                    datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
+                )
+                break
+        project_json["runs"] = runs
+        project_json["latest_run"] = run_id
+        project_json["updated_at"] = (
+            datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
+        )
+        _atomic_write_json(project_json_path, project_json)
+    except Exception as e:
+        logger.error(f"Failed to finalize run metadata: {e}")
 
 
 def validate_args(args):
@@ -284,29 +520,35 @@ def resolve_branch_and_commits(args, repo):
             f"No branch is specified, use the branch of the current checkout: {args.branch}"
         )
 
+    if not args.project:
+        args.project = os.path.basename(os.path.normpath(repo.workdir))
+        logger.info(
+            f"No project is specified, use the root folder name as project name: {args.project}"
+        )
+
     # 如果指定了分支但没有指定提交哈希或指定比较提交哈希，则获取该分支的最新提交
     if args.branch and not args.snapshot and not args.history and not args.diff:
         latest_commit_hash = str(repo.branches[args.branch].target)
         logger.info(
             f"Without specifying a mode or commit, get the latest commit of {args.branch}: {latest_commit_hash}, executed in snapshot mode"
         )
-        return "snap", args.name, args.branch, latest_commit_hash, ""
+        return "snap", args.project, args.branch, latest_commit_hash, ""
 
     if args.branch and args.snapshot:
         snapshot_commit_hash = parse_short_hash(repo, args.snapshot)
-        return "snap", args.name, args.branch, snapshot_commit_hash, ""
+        return "snap", args.project, args.branch, snapshot_commit_hash, ""
 
     if args.branch and args.history:
         history_commit_hash = parse_short_hash(repo, args.history)
-        return "hist", args.name, args.branch, history_commit_hash, ""
+        return "hist", args.project, args.branch, history_commit_hash, ""
 
     if args.branch and args.diff:
         base_commit_hash = parse_short_hash(repo, args.diff[0])
         target_commit_hash = parse_short_hash(repo, args.diff[1])
-        return "diff", args.name, args.branch, base_commit_hash, target_commit_hash
+        return "diff", args.project, args.branch, base_commit_hash, target_commit_hash
 
     if args.diff_branch:
-        return "diffb", args.name, "", args.diff_branch[0], args.diff_branch[1]
+        return "diffb", args.project, "", args.diff_branch[0], args.diff_branch[1]
 
     logger.error("Error: No valid command arguments were provided")
     sys.exit(1)
@@ -322,9 +564,9 @@ def main():
         help="Specify the branch. If not provided, the current checkout branch will be used.",
     )
     parser.add_argument(
-        "--name",
+        "--project",
         type=str,
-        help="Specify the name of the analysis task",
+        help="Specify the project name of the analysis task",
     )
     parser.add_argument(
         "--snapshot",
@@ -371,10 +613,103 @@ def main():
 
     validate_args(args)
     repo = Repository(args.repo)
-    mode, name, branch, base, target = resolve_branch_and_commits(args, repo)
-    engine = init_output(mode, name)
-    if engine:
-        create_tables(engine)
+    mode, project, branch, base, target = resolve_branch_and_commits(args, repo)
+
+    csv_cfg = output_config.get("csv") or {}
+    artifacts_root = csv_cfg.get("path") if isinstance(csv_cfg, dict) else None
+    if not artifacts_root:
+        artifacts_root = os.path.join(repo.workdir, "artifacts")
+
+    producer = load_runmeta_plugin()
+    repo_path = args.repo
+
+    # Compute layout and ensure directories
+    run_id, project_dir, run_dir = _compute_run_layout(
+        artifacts_root=artifacts_root,
+        project=project,
+        mode=mode,
+        base=base or "",
+        target=target or "",
+    )
+
+    # Derive common fields
+    run_type = "snapshot" if mode == "snap" or mode == "hist" else "diff"
+    scope_key = (base or "") if (mode == "snap" or mode == "hist") else f"{base}..{target}"
+
+    # Upsert project.json (core-managed fields) and merge plugin project metadata
+    project_json = _load_projects_json(project_dir)
+    project_json.setdefault("schema_version", "1.0")
+    project_json.setdefault("id", project)
+    project_json.setdefault("title", project)
+    project_json["latest_run"] = run_id
+    project_json["updated_at"] = (
+        datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
+    )
+    runs_list = project_json.setdefault("runs", [])
+    runs_list.append(
+        {
+            "run_id": run_id,
+            "run_type": run_type,
+            "scope_key": scope_key,
+            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds")
+            + "Z",
+        }
+    )
+    # Merge in plugin-provided project metadata (excluding reserved keys)
+    try:
+        plugin_proj_meta = producer.project_metadata(
+            artifacts_root=artifacts_root,
+            project=project,
+            mode=mode,
+            branch=branch or "",
+            base=base or "",
+            target=target or "",
+            repo_path=repo_path,
+        ) or {}
+        reserved = {"schema_version", "id", "latest_run", "updated_at", "runs"}
+        for k, v in plugin_proj_meta.items():
+            if k not in reserved:
+                project_json[k] = v
+    except Exception as e:
+        logger.warning(f"Project metadata plugin error: {e}")
+
+    _atomic_write_json(os.path.join(project_dir, "project.json"), project_json)
+
+    # Initialize run.json skeleton and merge plugin run metadata
+    run_json = {
+        "schema_version": "1.0",
+        "project_id": project,
+        "run_id": run_id,
+        "run_type": run_type,
+        "scope_type": run_type,
+        "scope_key": scope_key,
+        "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z",
+    }
+    try:
+        plugin_run_meta = producer.run_metadata(
+            artifacts_root=artifacts_root,
+            project=project,
+            run_id=run_id,
+            mode=mode,
+            branch=branch or "",
+            base=base or "",
+            target=target or "",
+            repo_path=repo_path,
+        ) or {}
+        # Allow plugin to add/override non-core fields; protect core-managed ones
+        reserved = {"schema_version", "project_id", "run_id", "run_type", "scope_type", "scope_key", "started_at"}
+        for k, v in plugin_run_meta.items():
+            if k in reserved:
+                continue
+            run_json[k] = v
+    except Exception as e:
+        logger.warning(f"Run metadata plugin error: {e}")
+
+    _atomic_write_json(os.path.join(run_dir, "run.json"), run_json)
+
+    global run_dir_data
+    run_dir_data = os.path.join(run_dir, "data")
+    init_output(mode, run_dir_data)
 
     load_and_register_analyzers()
 
@@ -386,3 +721,7 @@ def main():
         diff_commit_exec(repo, branch, base, target)
     elif mode == "diffb":
         diff_branch_exec(repo, base, target)
+
+    # Finalize metadata once processing succeeds
+    if run_dir:
+        _finalize_run_metadata(run_dir)
