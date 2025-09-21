@@ -563,7 +563,9 @@ def load_statistic_classes_from_notebook(
     script, executes it inside an isolated module namespace, and then returns
     any classes that inherit from :class:`BaseStatistic`.  This makes it easy
     to prototype statistics inside notebooks while still reusing the Python
-    classes inside the quickstart dashboard.
+    classes inside the quickstart dashboard.  Notebook cells tagged with
+    ``"skip-loader"`` are ignored so preview-only cells can avoid executing
+    during class import.
     """
 
     base_cls = base_class or BaseStatistic
@@ -588,6 +590,35 @@ def load_statistic_classes_from_notebook(
         ) from exc
 
     notebook = nbformat.read(path, as_version=4)
+
+    skip_tags = {"skip-loader"}
+    if skip_tags:
+        filtered_cells = []
+        for cell in notebook.cells:
+            metadata = getattr(cell, "metadata", None)
+            if metadata is None and isinstance(cell, dict):
+                metadata = cell.get("metadata")
+
+            tags = []
+            if metadata is not None:
+                candidate = getattr(metadata, "get", None)
+                if callable(candidate):
+                    tags = candidate("tags", [])
+                elif isinstance(metadata, dict):
+                    tags = metadata.get("tags", [])
+
+            if not isinstance(tags, list):
+                tags = []
+
+            if any(tag in skip_tags for tag in tags):
+                continue
+
+            filtered_cells.append(cell)
+
+        if len(filtered_cells) != len(notebook.cells):
+            notebook = notebook.copy()
+            notebook.cells = filtered_cells
+
     code, _ = PythonExporter().from_notebook_node(notebook)
 
     module_name = f"_nb_stat_{path.stem}_{uuid.uuid4().hex}"
